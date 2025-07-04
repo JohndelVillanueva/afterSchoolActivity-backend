@@ -1,0 +1,30 @@
+{
+  "name": "backend",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma": "prisma"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.4",
+    "@prisma/client": "6.8.1",
+    "@types/uuid": "^10.0.0",
+    "hono": "^4.8.2",
+    "mysql2": "^3.14.1",
+    "prisma": "6.8.1",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "tsx": "^4.7.1",
+    "typescript": "^5.8.3"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@prisma/client",
+      "esbuild"
+    ]
+  }
+}

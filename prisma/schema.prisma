@@ -1,0 +1,635 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model activitysession {
+  id                  Int                 @id @default(autoincrement())
+  activityId          Int
+  date                DateTime
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime
+  afterschoolactivity afterschoolactivity @relation(fields: [activityId], references: [id], map: "ActivitySession_activityId_fkey")
+  attendance          attendance[]
+
+  @@index([activityId], map: "ActivitySession_activityId_fkey")
+}
+
+model afterschoolactivity {
+  id               Int                @id @default(autoincrement())
+  name             String
+  description      String?
+  dayOfWeek        String
+  startTime        DateTime
+  endTime          DateTime
+  location         String?
+  coachName        String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime
+  photo            String?
+  activitysession  activitysession[]
+  enrolledactivity enrolledactivity[]
+  rate             Decimal            @db.Decimal(10,2) @default(0.00)
+}
+
+model attendance {
+  id              Int             @id @default(autoincrement())
+  sessionId       Int
+  userId          Int
+  status          String
+  createdAt       DateTime        @default(now()) // <-- Add this line
+  activitysession activitysession @relation(fields: [sessionId], references: [id], map: "Attendance_sessionId_fkey")
+  user            user            @relation(fields: [userId], references: [id], map: "Attendance_userId_fkey")
+
+  @@unique([sessionId, userId], map: "Attendance_sessionId_userId_key")
+  @@index([userId], map: "Attendance_userId_fkey")
+}
+
+model attendance_library {
+  id   Int       @id @default(autoincrement())
+  name String?   @db.VarChar(255)
+  date DateTime? @db.DateTime(0)
+  rfid String?   @db.VarChar(255)
+}
+
+model borrowers {
+  id            Int       @id @default(autoincrement())
+  name          String?   @db.VarChar(255)
+  rfid          String?   @db.Text
+  title         String?   @db.VarChar(255)
+  date_borrowed DateTime? @db.DateTime(0)
+  date_returned DateTime? @db.DateTime(0)
+  remarks       String?   @db.VarChar(255)
+}
+
+model buyers {
+  buyer_id   Int     @id @default(autoincrement())
+  buyer_name String  @unique(map: "buyer_name") @db.VarChar(255)
+  rfid       BigInt? @unique(map: "rfid")
+}
+
+model clinic_history {
+  Id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(255)
+  grade       String   @db.VarChar(255)
+  complaint   String   @db.VarChar(255)
+  diagnose    String   @db.VarChar(255)
+  treatment   String   @db.VarChar(255)
+  vital_signs String   @db.VarChar(255)
+  time_in     DateTime @db.Time(0)
+  time_out    DateTime @db.Time(0)
+  date        String   @db.VarChar(255)
+  remarks     String   @db.VarChar(255)
+}
+
+model countries {
+  id            Int     @id @default(autoincrement())
+  countryCode   String  @default("") @db.Char(2)
+  countryName   String  @default("") @db.VarChar(100)
+  currencyCode  String? @db.Char(3)
+  fipsCode      String? @db.Char(2)
+  isoNumeric    String? @db.Char(4)
+  north         String? @db.VarChar(30)
+  south         String? @db.VarChar(30)
+  east          String? @db.VarChar(30)
+  west          String? @db.VarChar(30)
+  capital       String? @db.VarChar(100)
+  continentName String? @db.VarChar(100)
+  continent     String? @db.Char(2)
+  languages     String? @db.VarChar(100)
+}
+
+model enrolledactivity {
+  id                  Int                 @id @default(autoincrement())
+  userId              Int
+  activityId          Int
+  enrollmentDate      DateTime            @default(now())
+  afterschoolactivity afterschoolactivity @relation(fields: [activityId], references: [id], map: "EnrolledActivity_activityId_fkey")
+  user                user                @relation(fields: [userId], references: [id], map: "EnrolledActivity_userId_fkey")
+
+  @@unique([userId, activityId], map: "EnrolledActivity_userId_activityId_key")
+  @@index([activityId], map: "EnrolledActivity_activityId_fkey")
+}
+
+model inventory {
+  id          Int      @id @default(autoincrement())
+  empno       String   @db.Text
+  description String   @db.Text
+  serial      String   @db.Text
+  dateout     DateTime @db.DateTime(0)
+  datein      DateTime @db.DateTime(0)
+  issuedby    String   @db.Text
+  remarks     String   @db.Text
+}
+
+model inventory__suppliers {
+  id            Int      @id @default(autoincrement())
+  companyName   String   @db.VarChar(255)
+  itemsProvided String?  @db.VarChar(255)
+  address       String?  @db.VarChar(255)
+  phoneNumber   String?  @db.VarChar(50)
+  email         String?  @db.VarChar(255)
+  rating        Decimal? @default(0.00) @db.Decimal(3, 2)
+}
+
+model inventory_bookstore {
+  id            Int      @id @default(autoincrement())
+  product_name  String   @db.VarChar(255)
+  quantity      Int
+  selling_price Float    @db.Float
+  date          DateTime @db.DateTime(0)
+}
+
+model library_login {
+  id       Int     @id @default(autoincrement())
+  username String? @db.VarChar(255)
+  password String? @db.VarChar(255)
+}
+
+model logs_enroll {
+  id        Int      @id @default(autoincrement())
+  ern       String   @db.MediumText
+  stage     Int
+  usertouch String   @db.MediumText
+  touch     DateTime @db.DateTime(0)
+  notes     String   @db.MediumText
+}
+
+model nationalities {
+  id              Int     @id @default(autoincrement())
+  countryCode     String  @default("") @db.Char(2)
+  nationalityName String  @default("") @db.VarChar(100)
+  currencyCode    String? @db.Char(3)
+  fipsCode        String? @db.Char(2)
+  isoNumeric      String? @db.Char(4)
+  north           String? @db.VarChar(30)
+  south           String? @db.VarChar(30)
+  east            String? @db.VarChar(30)
+  west            String? @db.VarChar(30)
+  capital         String? @db.VarChar(100)
+  continentName   String? @db.VarChar(100)
+  continent       String? @db.Char(2)
+}
+
+
+model products {
+  id               Int      @id @default(autoincrement())
+  product_code     String   @db.VarChar(255)
+  type_of_product  String   @db.VarChar(255)
+  name_of_product  String   @db.VarChar(255)
+  price_of_product Float    @db.Float
+  date_created     DateTime @db.DateTime(0)
+  last_touch       String   @db.VarChar(25)
+}
+
+model requests {
+  id              Int      @id @default(autoincrement())
+  rfid            BigInt
+  reqtype         String   @db.MediumText
+  reqdate         DateTime @db.DateTime(0)
+  reqneed         DateTime @db.DateTime(0)
+  reqdetails      String   @db.MediumText
+  approvedby      BigInt
+  approvedate     DateTime @db.DateTime(0)
+  approvedfin     BigInt
+  approvedfindate DateTime @db.DateTime(0)
+  status          String   @db.MediumText
+}
+
+model s_activities {
+  id         Int      @id @default(autoincrement())
+  actid      String   @db.Text
+  subjcode   String   @db.Text
+  actlvl     Int
+  actsection String   @db.Text
+  actdate    DateTime @db.DateTime(0)
+  actcreate  String   @db.Text
+  actdesc    String   @db.Text
+  acttype    Int
+  actqtr     Int
+  maxscore   Int
+  flag       Int
+}
+
+model s_classattendance {
+  id         Int      @id @default(autoincrement())
+  attendance Int
+  subjid     String   @db.Text
+  studid     String   @db.Text
+  adate      DateTime @db.DateTime(0)
+  tid        String   @db.Text
+  notes      String   @db.Text
+}
+
+model s_coretable {
+  id    Int     @id @default(autoincrement())
+  start Decimal @db.Decimal(10, 2)
+  end   Decimal @db.Decimal(10, 2)
+  grade String  @db.Text
+}
+
+model s_corevalues {
+  id        Int    @id @default(autoincrement())
+  corevalue String @db.Text
+}
+
+model s_payables {
+  id                    Int    @id @default(autoincrement())
+  user_id               String @db.VarChar(240)
+  reservation_fee       Int?
+  tuition_fee           Int?
+  other_fee             Int?
+  assessment_fee        Int?
+  registration_fee      Int?
+  special_permit        Int?
+  international_fee_old Int?
+  international_fee_new Int?
+  pta                   Int?
+}
+
+model s_recommendations {
+  id         Int    @id @default(autoincrement())
+  user_id    String @db.VarChar(255)
+  esl        Int?
+  star       Int?
+  completion Int?
+}
+
+model s_scores {
+  id       Int    @id @default(autoincrement())
+  subjcode String @db.Text
+  actid    String @db.Text
+  acttype  Int
+  sid      String @db.Text
+  score    Int
+  maxscore Int
+  qtr      Int
+  flag     Int
+}
+
+model s_studentcv {
+  id           Int     @id @default(autoincrement())
+  sid          String  @db.Text
+  tid          String  @db.Text
+  subjid       String  @db.Text
+  qtr          Int
+  independence Decimal @db.Decimal(10, 0)
+  confidence   Decimal @db.Decimal(10, 0)
+  respect      Decimal @db.Decimal(10, 0)
+  empathy      Decimal @db.Decimal(10, 0)
+  appreciation Decimal @db.Decimal(10, 0)
+  tolerance    Decimal @db.Decimal(10, 0)
+  enthusiasm   Decimal @db.Decimal(10, 0)
+  conduct      Decimal @db.Decimal(10, 0)
+}
+
+model s_subjects {
+  id          Int      @id @default(autoincrement())
+  code        String   @db.Text
+  tid         String   @db.Text
+  subjdesc    String   @db.Text
+  subjlevel   String   @db.Text
+  subjsection String   @db.Text
+  assignedby  String   @db.Text
+  assigndate  DateTime @db.DateTime(0)
+  percentww   Float    @db.Float
+  percentpt   Float    @db.Float
+  percentqt   Float    @db.Float
+}
+
+model s_transmute {
+  id         Int   @id @default(autoincrement())
+  lowerl     Float @db.Float
+  upperl     Float @db.Float
+  transmuted Float @db.Float
+}
+
+model s_verifications {
+  id             Int      @id @default(autoincrement())
+  user_id        String   @db.VarChar(255)
+  section        String   @db.VarChar(255)
+  grade          Int
+  subject        String?  @db.VarChar(255)
+  request_unlock Int?
+  flag           Int?
+  created_at     DateTime @db.DateTime(0)
+}
+
+model sales_history {
+  sale_id      Int       @id @default(autoincrement())
+  buyer_id     Int?
+  product_name String    @db.VarChar(255)
+  quantity     Int
+  sale_date    DateTime? @default(now()) @db.DateTime(0)
+  rfid         BigInt?
+
+  @@index([buyer_id], map: "buyer_id")
+}
+
+model schedule {
+  id    Int       @id @default(autoincrement())
+  title String    @db.VarChar(255)
+  start DateTime  @db.DateTime(0)
+  end   DateTime? @db.DateTime(0)
+}
+
+model studentdetails {
+  id              Int    @id @default(autoincrement())
+  uniqid          String @db.Text
+  visa            String @db.Text
+  father          String @db.Text
+  fathermail      String @db.Text
+  fathernumber    String @db.Text
+  fatherwork      String @db.Text
+  fcompany        String @db.Text
+  fsalary         String @db.Text
+  mother          String @db.Text
+  mothermail      String @db.Text
+  mothernumber    String @db.Text
+  motherwork      String @db.Text
+  mcompany        String @db.Text
+  msalary         String @db.Text
+  street          String @db.Text
+  barangay        String @db.Text
+  city            String @db.Text
+  postal          String @db.Text
+  englishrw       String @db.Text
+  englishv        String @db.Text
+  languages       String @db.Text
+  advclasses      String @db.Text
+  remedial        String @db.Text
+  skill           String @db.Text
+  ashtma          String @db.Text
+  ashtmar         String @db.Text
+  allergy         String @db.Text
+  allergyr        String @db.Text
+  drug            String @db.Text
+  drugr           String @db.Text
+  speech          String @db.Text
+  speechr         String @db.Text
+  vision          String @db.Text
+  visionr         String @db.Text
+  hearing         String @db.Text
+  hearingr        String @db.Text
+  adhd            String @db.Text
+  adhdr           String @db.Text
+  healthcond      String @db.Text
+  hospitalization String @db.Text
+  injuries        String @db.Text
+  medication      String @db.Text
+  general         String @db.Text
+  generaldets     String @db.Text
+  psych           String @db.Text
+  psychdets       String @db.Text
+  minor           String @db.Text
+  emergency       String @db.Text
+  hospital        String @db.Text
+  otc             String @db.Text
+  conforme        String @db.Text
+  conformedate    String @db.Text
+}
+
+model timeoff {
+  id          Int      @id @default(autoincrement())
+  rfid        BigInt
+  leavetype   String   @db.MediumText
+  datefrom    DateTime @db.Date
+  dateto      DateTime @db.Date
+  ishalfday   Int
+  details     String   @db.MediumText
+  credit      Int
+  approval    String   @db.MediumText
+  approvedate DateTime @db.Date
+  hrnote      String   @db.MediumText
+  hrdate      DateTime @db.Date
+}
+
+model type_of_products {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(255)
+}
+
+model uniform {
+  id           Int     @id @default(autoincrement())
+  rfid         String  @db.MediumText
+  size         String  @db.MediumText
+  basic        String? @db.MediumText
+  activity     String? @db.MediumText
+  formal       String? @db.MediumText
+  qtybasic     String  @db.MediumText
+  qtyact       String  @db.MediumText
+  qtyform      String  @db.MediumText
+  iscomplete   Int
+  lasttouch    String  @db.MediumText
+  dateordered  String? @db.MediumText
+  datereleased String? @db.MediumText
+  comment      String  @db.MediumText
+}
+
+model uniform_inventory {
+  id              Int      @id @default(autoincrement())
+  uniform_type_id String   @db.Text
+  uniform_size_id String   @db.Text
+  qty             Int
+  gender          String   @db.VarChar(255)
+  date            DateTime @db.DateTime(0)
+  user            String   @db.Text
+}
+
+model uniform_issued {
+  id              Int      @id @default(autoincrement())
+  rfid            String   @db.Text
+  releasedby      String   @db.Text
+  uniform_type_id String   @db.VarChar(255)
+  uniform_size_id String   @db.VarChar(255)
+  date            DateTime @db.DateTime(0)
+}
+
+model uniform_sizes {
+  id         Int       @id @default(autoincrement())
+  size       String    @db.Text
+  created_at DateTime? @db.DateTime(0)
+}
+
+model uniform_types {
+  id         Int       @id @default(autoincrement())
+  type       String    @db.VarChar(255)
+  created_at DateTime? @db.DateTime(0)
+}
+
+model user {
+  id               Int                @id @default(autoincrement())
+  rfid             BigInt             @unique
+  fname            String             @db.MediumText
+  mname            String             @db.MediumText
+  lname            String             @db.MediumText
+  type             String             @db.VarChar(255)
+  gender           String             @db.Text
+  position         String             @db.MediumText
+  grade            String             @db.Text
+  section          String             @db.Text
+  dob              DateTime?          @db.Date
+  email            String             @db.MediumText
+  mobile           String             @db.MediumText
+  vacchist         String             @db.MediumText
+  photo            String             @db.MediumText
+  manager          String             @db.Text
+  isactive         Int
+  is_situation     String             @db.VarChar(255)
+  username         String             @db.Text
+  password         String             @db.Text
+  level            Int
+  status           Int
+  prevsch          String             @db.Text
+  prevschcountry   String             @db.Text
+  lrn              String             @db.Text
+  uniqid           String             @db.Text
+  tf               String             @db.Text
+  country          String             @db.Text
+  nationality      String             @db.Text
+  nationalities    String             @db.VarChar(255)
+  guardianname     String             @db.Text
+  guardianemail    String             @db.Text
+  guardianphone    String             @db.Text
+  referral         String             @db.Text
+  apptype          String             @db.Text
+  sy               String             @db.Text
+  strand           String             @db.Text
+  religion         String             @db.Text
+  visa             String             @db.Text
+  earlybird        Int
+  modelrelease     Int
+  feepolicy        Int
+  refund           Int
+  tos              Int
+  empno            String             @db.Text
+  isESL            Int
+  house            String             @db.VarChar(255)
+  isofficial       Int
+  attendance       attendance[]
+  enrolledactivity enrolledactivity[]
+  isEnrolledInAfterSchool Boolean @default(false)
+}
+
+model user22 {
+  id             Int      @id @default(autoincrement())
+  rfid           BigInt
+  fname          String   @db.MediumText
+  mname          String   @db.MediumText
+  lname          String   @db.MediumText
+  gender         String   @db.Text
+  position       String   @db.MediumText
+  grade          String   @db.Text
+  section        String   @db.Text
+  dob            DateTime @db.Date
+  email          String   @db.MediumText
+  mobile         String   @db.MediumText
+  vacchist       String   @db.MediumText
+  photo          String   @db.MediumText
+  manager        String   @db.Text
+  isactive       Int
+  username       String   @db.Text
+  password       String   @db.Text
+  level          Int
+  status         Int
+  prevsch        String   @db.Text
+  prevschcountry String   @db.Text
+  lrn            String   @db.Text
+  uniqid         String   @db.Text
+  tf             String   @db.Text
+  country        String   @db.Text
+  nationality    String   @db.Text
+  guardianname   String   @db.Text
+  guardianemail  String   @db.Text
+  guardianphone  String   @db.Text
+  referral       String   @db.Text
+  apptype        String   @db.Text
+  sy             String   @db.Text
+  strand         String   @db.Text
+  visa           String   @db.Text
+  earlybird      Int
+  modelrelease   Int
+  feepolicy      Int
+  refund         Int
+  tos            Int
+}
+
+model users24 {
+  id             Int      @id @default(autoincrement())
+  rfid           BigInt
+  fname          String   @db.MediumText
+  mname          String   @db.MediumText
+  lname          String   @db.MediumText
+  type           String   @db.VarChar(255)
+  gender         String   @db.Text
+  position       String   @db.MediumText
+  grade          String   @db.Text
+  section        String   @db.Text
+  dob            DateTime @db.Date
+  email          String   @db.MediumText
+  mobile         String   @db.MediumText
+  vacchist       String   @db.MediumText
+  photo          String   @db.MediumText
+  manager        String   @db.Text
+  isactive       Int
+  is_situation   String   @db.VarChar(255)
+  username       String   @db.Text
+  password       String   @db.Text
+  level          Int
+  status         Int
+  prevsch        String   @db.Text
+  prevschcountry String   @db.Text
+  lrn            String   @db.Text
+  uniqid         String   @db.Text
+  tf             String   @db.Text
+  country        String   @db.Text
+  nationality    String   @db.Text
+  nationalities  String   @db.VarChar(255)
+  religion       String   @db.Text
+  guardianname   String   @db.Text
+  guardianemail  String   @db.Text
+  guardianphone  String   @db.Text
+  referral       String   @db.Text
+  apptype        String   @db.Text
+  sy             String   @db.Text
+  strand         String   @db.Text
+  visa           String   @db.Text
+  earlybird      Int
+  modelrelease   Int
+  feepolicy      Int
+  refund         Int
+  tos            Int
+  empno          String   @db.Text
+  isESL          Int
+  house          String   @db.Text
+  isofficial     Int
+}
+
+model visitorlog {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.Text
+  rfid         String   @db.Text
+  comment      String   @db.Text
+  registerdate DateTime @db.DateTime(0)
+  status       Int
+}
+
+model wispay {
+  id           Int      @id @default(autoincrement())
+  debit        Decimal  @db.Decimal(10, 2)
+  credit       Decimal  @db.Decimal(10, 2)
+  rfid         BigInt
+  empid        String   @db.Text
+  username     String   @db.VarChar(255)
+  refcode      String   @db.Text
+  transdate    DateTime @db.DateTime(0)
+  processedby  String   @db.Text
+  product_type String   @db.VarChar(255)
+  product_name String   @db.VarChar(255)
+  quantity     Float    @db.Float
+  isAfterSchoolPayment Boolean @default(false)
+}
