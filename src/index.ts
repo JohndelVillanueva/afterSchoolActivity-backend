@@ -12,7 +12,7 @@ const app = new Hono()
 
 // Add CORS middleware
 app.use('/*', cors({
-  origin: ['http://localhost:5173'], // Your frontend URL
+  origin: ['http://localhost:5173', 'http://10.128.13.56:5173'], // Allow both localhost and LAN frontend
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   exposeHeaders: ['Content-Length', 'X-Kuma-Revision'],
