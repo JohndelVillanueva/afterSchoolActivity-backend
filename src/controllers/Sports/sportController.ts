@@ -500,3 +500,171 @@ export const getAllAttendanceTransactionsController = async (c: Context): Promis
     }, 500);
   }
 };
+
+export const updateSportController = async (c: Context): Promise<Response> => {
+  try {
+    const body = await c.req.json();
+    const { 
+      id, 
+      name, 
+      description, 
+      dayOfWeek, 
+      startTime, 
+      endTime, 
+      location, 
+      coachName, 
+      photo, 
+      rate 
+    } = body;
+
+    // Validate required fields
+    if (!id) {
+      return c.json({
+        success: false,
+        error: 'Sport ID is required',
+      }, 400);
+    }
+
+    if (!name || !dayOfWeek || !startTime || !endTime) {
+      return c.json({
+        success: false,
+        error: 'Missing required fields: name, dayOfWeek, startTime, and endTime are required',
+      }, 400);
+    }
+
+    // Check if sport exists
+    const existingSport = await prisma.afterschoolactivity.findUnique({
+      where: { id: Number(id) },
+    });
+
+    if (!existingSport) {
+      return c.json({
+        success: false,
+        error: 'Sport not found',
+      }, 404);
+    }
+
+    // Prepare update data
+    const updateData: any = {
+      name,
+      description: description || '',
+      dayOfWeek,
+      startTime: new Date(startTime),
+      endTime: new Date(endTime),
+      location: location || 'Westfields International School',
+      coachName: coachName || '',
+      photo: photo || '',
+      rate: Number(rate) || 0,
+      updatedAt: new Date(),
+    };
+
+    // Try to update the activity
+    const updatedActivity = await prisma.afterschoolactivity.update({
+      where: { id: Number(id) },
+      data: updateData,
+    });
+
+    console.log('[DEBUG] Sport updated successfully:', {
+      id: updatedActivity.id,
+      name: updatedActivity.name,
+      updatedAt: updatedActivity.updatedAt,
+    });
+
+    return c.json({
+      success: true,
+      data: updatedActivity,
+      message: 'Sport updated successfully',
+    });
+  } catch (error: any) {
+    console.error('[ERROR] Error updating sport:', error);
+
+    // Handle unique constraint violation
+    if (error.code === 'P2002') {
+      return c.json({
+        success: false,
+        error: 'An activity with this name and start time already exists.',
+      }, 409);
+    }
+
+    // Handle record not found
+    if (error.code === 'P2025') {
+      return c.json({
+        success: false,
+        error: 'Sport not found',
+      }, 404);
+    }
+
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+export const deleteSportController = async (c: Context): Promise<Response> => {
+  try {
+    const id = Number(c.req.param('id'));
+    
+    if (isNaN(id)) {
+      return c.json({
+        success: false,
+        error: 'Invalid sport ID',
+      }, 400);
+    }
+
+    // Check if sport exists
+    const existingSport = await prisma.afterschoolactivity.findUnique({
+      where: { id },
+    });
+
+    if (!existingSport) {
+      return c.json({
+        success: false,
+        error: 'Sport not found',
+      }, 404);
+    }
+
+    // Check if there are enrollments for this sport
+    const enrollments = await prisma.enrolledactivity.findMany({
+      where: { activityId: id },
+    });
+
+    if (enrollments.length > 0) {
+      return c.json({
+        success: false,
+        error: 'Cannot delete sport with active enrollments. Please remove all enrollments first.',
+      }, 400);
+    }
+
+    // Check if there are activity sessions for this sport
+    const sessions = await prisma.activitysession.findMany({
+      where: { activityId: id },
+    });
+
+    if (sessions.length > 0) {
+      return c.json({
+        success: false,
+        error: 'Cannot delete sport with existing sessions. Please delete all sessions first.',
+      }, 400);
+    }
+
+    // Delete the sport
+    await prisma.afterschoolactivity.delete({
+      where: { id },
+    });
+
+    console.log('[DEBUG] Sport deleted successfully:', { id });
+
+    return c.json({
+      success: true,
+      message: 'Sport deleted successfully',
+    });
+  } catch (error: any) {
+    console.error('[ERROR] Error deleting sport:', error);
+
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};

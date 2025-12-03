@@ -1,5 +1,16 @@
 import { Hono } from 'hono';
-import { createSportController, getAllSportsController, uploadPhotoController, getEnrolledStudentsController, getActivityByIdController, markAttendanceAndDeductController, getTodayAttendanceController, getAllAttendanceTransactionsController } from './sportController.js';
+import { 
+  createSportController, 
+  getAllSportsController, 
+  uploadPhotoController, 
+  getEnrolledStudentsController, 
+  getActivityByIdController, 
+  markAttendanceAndDeductController, 
+  getTodayAttendanceController, 
+  getAllAttendanceTransactionsController,
+  updateSportController,  // Add this
+  deleteSportController   // Add this
+} from './sportController.js';
 
 const sports = new Hono()
   .post('/createSport', createSportController)
@@ -9,6 +20,8 @@ const sports = new Hono()
   .get('/getActivityById/:id', getActivityByIdController)
   .post('/markAttendanceAndDeduct', markAttendanceAndDeductController)
   .get('/getTodayAttendance', getTodayAttendanceController)
-  .get('/getAllAttendanceTransactions', getAllAttendanceTransactionsController);
+  .get('/getAllAttendanceTransactions', getAllAttendanceTransactionsController)
+  .put('/updateSport', updateSportController)           // Add this line
+  .delete('/deleteSport/:id', deleteSportController);   // Add this line
 
-export default sports; 
+export default sports;
