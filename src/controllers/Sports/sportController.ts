@@ -2,6 +2,7 @@ import { type Context } from 'hono';
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
 import { uploadFile } from '../../fileManager.js';
+import { sendAttendanceEmail } from '../../services/emailServices.js';
 
 const prisma = new PrismaClient();
 
@@ -15,7 +16,7 @@ function generateUniqueFilename(extension: string): string {
 export const createSportController = async (c: Context): Promise<Response> => {
   try {
     const body = await c.req.json();
-    const { name, description, dayOfWeek, startTime, endTime, location, coachName, photo } = body;
+    const { name, description, dayOfWeek, startTime, endTime, location, coachName, photo, rate } = body;
 
     if (!name || !dayOfWeek || !startTime || !endTime) {
       return c.json({
@@ -24,6 +25,7 @@ export const createSportController = async (c: Context): Promise<Response> => {
       }, 400);
     }
 
+    // Try to create the activity
     const newActivity = await prisma.afterschoolactivity.create({
       data: {
         name,
@@ -34,6 +36,7 @@ export const createSportController = async (c: Context): Promise<Response> => {
         location,
         coachName,
         photo,
+        rate,
         updatedAt: new Date(),
       },
     });
@@ -42,7 +45,14 @@ export const createSportController = async (c: Context): Promise<Response> => {
       success: true,
       data: newActivity,
     }, 201);
-  } catch (error) {
+  } catch (error: any) {
+    // Handle unique constraint violation
+    if (error.code === 'P2002') {
+      return c.json({
+        success: false,
+        error: 'An activity with this name and start time already exists.',
+      }, 409);
+    }
     console.error('[ERROR] Error creating sport:', error);
     return c.json({
       success: false,
@@ -184,17 +194,35 @@ export const getActivityByIdController = async (c: Context): Promise<Response> =
 
 export const markAttendanceAndDeductController = async (c: Context): Promise<Response> => {
   try {
-    const { studentId, activityId } = await c.req.json();
-    if (!studentId || !activityId) {
-      return c.json({ success: false, error: 'Missing studentId or activityId' }, 400);
+    const { studentId, activityId, status } = await c.req.json();
+    if (!studentId || !activityId || !status) {
+      return c.json({ success: false, error: 'Missing studentId, activityId, or status' }, 400);
     }
 
-    // Get student and activity
-    const user = await prisma.user.findUnique({ where: { id: Number(studentId) } });
+    // Validate status
+    if (status !== 'present' && status !== 'absent') {
+      return c.json({ success: false, error: 'Status must be either "present" or "absent"' }, 400);
+    }
+
+    // Get student and activity with additional email fields
+    const user = await prisma.user.findUnique({ 
+      where: { id: Number(studentId) },
+      select: {
+        id: true,
+        rfid: true,
+        fname: true,
+        mname: true,
+        lname: true,
+        email: true,
+        guardianemail: true, // Guardian email for notifications
+      }
+    });
+    
     const activity = await prisma.afterschoolactivity.findUnique({
       where: { id: Number(activityId) },
       select: { id: true, name: true, rate: true },
     });
+    
     if (!user || !activity) {
       return c.json({ success: false, error: 'Student or activity not found' }, 404);
     }
@@ -243,33 +271,33 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
       return c.json({ success: false, error: 'Attendance already recorded for today.' }, 400);
     }
 
-    // Debug log
-    console.log('Deducting from wispay:', {
-      rfid: user.rfid,
-      debit: activity['rate'],
-      activity,
-      user
-    });
-
-    // Deduct rate from wispay (create a debit transaction)
-    await prisma.wispay.create({
-      data: {
-        rfid: BigInt(user.rfid),
-        debit: activity['rate'],
-        credit: 0,
-        empid: '',
-        username: '',
-        refcode: `ATTEND-${activityId}-${studentId}-${Date.now()}`,
-        transdate: new Date(),
-        processedby: '',
-        product_type: 'AfterSchool',
-        product_name: activity.name,
-        quantity: 1,
-        isAfterSchoolPayment: true,
+    // Check user session BEFORE marking attendance
+    const userSession = await prisma.usersession.findUnique({
+      where: {
+        userId_activityId: {
+          userId: user.id,
+          activityId: activity.id,
+        }
       }
     });
 
-    // Mark attendance for the student in this session
+    // Validate if student has sessions remaining
+    if (userSession) {
+      // Check if sessions remaining is 0 or if attended equals purchased
+      if (userSession.sessionsRemaining <= 0 || userSession.sessionsAttended >= userSession.sessionsPurchased) {
+        return c.json({ 
+          success: false, 
+          error: 'No sessions remaining. Student has used all purchased sessions. Please purchase more sessions to continue.',
+          details: {
+            sessionsPurchased: userSession.sessionsPurchased,
+            sessionsAttended: userSession.sessionsAttended,
+            sessionsRemaining: userSession.sessionsRemaining
+          }
+        }, 400);
+      }
+    }
+
+    // Mark attendance for the student in this session with the provided status
     await prisma.attendance.upsert({
       where: {
         sessionId_userId: {
@@ -277,18 +305,107 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
           userId: user.id,
         },
       },
-      update: { status: 'present' },
+      update: { status: status },
       create: {
         sessionId: session.id,
         userId: user.id,
-        status: 'present',
+        status: status,
       },
     });
 
-    return c.json({ success: true });
+    console.log(`[DEBUG] Attendance marked as ${status} for student:`, user.id);
+
+    // Update usersession to increment sessionsAttended and decrement sessionsRemaining
+    let updatedSessionData = {
+      sessionsAttended: 1,
+      sessionsRemaining: 0,
+      sessionsPurchased: 0
+    };
+
+    if (userSession) {
+      const newSessionsAttended = userSession.sessionsAttended + 1;
+      const newSessionsRemaining = Math.max(0, userSession.sessionsRemaining - 1);
+      
+      await prisma.usersession.update({
+        where: { id: userSession.id },
+        data: {
+          sessionsAttended: newSessionsAttended,
+          sessionsRemaining: newSessionsRemaining,
+          updatedAt: new Date(),
+        },
+      });
+      
+      updatedSessionData = {
+        sessionsAttended: newSessionsAttended,
+        sessionsRemaining: newSessionsRemaining,
+        sessionsPurchased: userSession.sessionsPurchased
+      };
+      
+      console.log(`[DEBUG] User session updated for ${status}: sessionsAttended=${newSessionsAttended}, sessionsRemaining=${newSessionsRemaining}`);
+    } else {
+      await prisma.usersession.create({
+        data: {
+          userId: user.id,
+          activityId: activity.id,
+          sessionId: session.id,
+          sessionsPurchased: 0,
+          sessionsAttended: 1,
+          sessionsRemaining: 0,
+        },
+      });
+      console.log(`[DEBUG] User session created with sessionsAttended = 1 for ${status}`);
+    }
+
+    // Send email notification
+    const studentName = `${user.fname} ${user.mname || ''} ${user.lname}`.trim();
+    const dateString = today.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+
+    // Check if student has an email
+    if (user.email && user.email.trim()) {
+      console.log(`[DEBUG] Sending attendance email to: ${user.email}`);
+      
+      const emailSent = await sendAttendanceEmail({
+        studentName,
+        studentEmail: user.email,
+        guardianEmail: user.guardianemail || undefined,
+        activityName: activity.name,
+        status,
+        date: dateString,
+        sessionsRemaining: updatedSessionData.sessionsRemaining,
+        sessionsAttended: updatedSessionData.sessionsAttended,
+        sessionsPurchased: updatedSessionData.sessionsPurchased,
+      });
+
+      if (emailSent) {
+        console.log(`[DEBUG] Email sent successfully to ${user.email}`);
+      } else {
+        console.warn(`[WARN] Failed to send email to ${user.email}`);
+      }
+    } else {
+      console.warn(`[WARN] Student ${user.id} has no email address. Skipping email notification.`);
+    }
+
+    return c.json({ 
+      success: true,
+      message: `Attendance marked as ${status} successfully`,
+      data: {
+        studentId: user.id,
+        activityId: activity.id,
+        sessionDate: today.toISOString().split('T')[0],
+        status: status,
+        emailSent: !!(user.email && user.email.trim()),
+      }
+    });
   } catch (error) {
     console.error('[ERROR] Mark attendance and deduct:', error);
-    return c.json({ success: false, error: error instanceof Error ? error.message : 'Internal server error' }, 500);
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Internal server error' 
+    }, 500);
   }
 };
 
@@ -339,90 +456,47 @@ export const getTodayAttendanceController = async (c: Context): Promise<Response
 
 export const getAllAttendanceTransactionsController = async (c: Context): Promise<Response> => {
   try {
-    // Get all wispay transactions that are afterschool payments
-    const wispayTransactions = await prisma.wispay.findMany({
-      where: {
-        isAfterSchoolPayment: true,
-      },
-      orderBy: {
-        transdate: 'desc',
-      },
-    });
-
-    // Get all attendance records with user and activity info
-    const sessions = await prisma.activitysession.findMany({
+    // Get all attendance records with user, session, and activity info
+    const attendanceRecords = await prisma.attendance.findMany({
       include: {
-        afterschoolactivity: true,
-        attendance: {
+        user: true,
+        activitysession: {
           include: {
-            user: true,
+            afterschoolactivity: true,
           },
         },
       },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
 
-    // Create a map of attendance records by session and user
-    const attendanceMap = new Map();
-    sessions.forEach(session => {
-      session.attendance.forEach(record => {
-        const { createdAt, user, status } = record as any;
-        const key = `${session.afterschoolactivity.name}-${user.rfid?.toString()}-${session.date.toISOString().split('T')[0]}`;
-        attendanceMap.set(key, {
-          studentName: `${user.fname} ${user.mname} ${user.lname}`.replace(/\s+/g, ' ').trim(),
-          rfid: user.rfid?.toString() || "",
-          activity: session.afterschoolactivity.name,
-          date: session.date.toISOString().split('T')[0],
-          time: createdAt ? createdAt.toISOString() : '',
-          status: status,
-        });
-      });
-    });
-
-    // Combine wispay transactions with attendance info
-    const allTransactions = await Promise.all(wispayTransactions.map(async transaction => {
-      const rfid = transaction.rfid.toString();
-      const date = transaction.transdate.toISOString().split('T')[0];
-      
-      // Try to find matching attendance record
-      let attendanceInfo = null;
-      for (const [key, value] of attendanceMap.entries()) {
-        if (key.includes(rfid) && key.includes(date)) {
-          attendanceInfo = value;
-          break;
-        }
-      }
-
-      // Try to get the real student name if not found in attendance
-      let studentName = attendanceInfo?.studentName;
-      if (!studentName) {
-        const user = await prisma.user.findFirst({
-          where: { rfid: BigInt(rfid) }
-        });
-        if (user) {
-          studentName = `${user.fname} ${user.mname} ${user.lname}`.replace(/\s+/g, ' ').trim();
-        } else {
-          studentName = `RFID: ${rfid}`;
-        }
-      }
+    // Transform the data to match the frontend expected format
+    const transformedRecords = attendanceRecords.map(record => {
+      const user = record.user;
+      const session = record.activitysession;
+      const activity = session?.afterschoolactivity;
 
       return {
-        id: transaction.id.toString(),
-        studentName,
-        rfid,
-        activity: transaction.product_name || 'Unknown Activity',
-        date,
-        time: transaction.transdate.toISOString(),
-        status: attendanceInfo?.status || 'payment',
-        credit: Number(transaction.credit || 0),
-        debit: Number(transaction.debit || 0),
-        refcode: transaction.refcode,
-        transdate: transaction.transdate,
+        id: record.id.toString(),
+        studentName: `${user.fname || ''} ${user.mname || ''} ${user.lname || ''}`.replace(/\s+/g, ' ').trim(),
+        rfid: user.rfid?.toString() || "",
+        activity: activity?.name || 'Unknown Activity',
+        date: session?.date ? session.date.toISOString().split('T')[0] : '',
+        time: record.createdAt.toISOString(),
+        status: record.status || 'absent',
       };
-    }));
+    });
 
-    return c.json({ success: true, data: allTransactions });
+    return c.json({ 
+      success: true, 
+      data: transformedRecords 
+    });
   } catch (error) {
     console.error('[ERROR] Fetching all attendance transactions:', error);
-    return c.json({ success: false, error: error instanceof Error ? error.message : 'Internal server error' }, 500);
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Internal server error' 
+    }, 500);
   }
-}; 
+};

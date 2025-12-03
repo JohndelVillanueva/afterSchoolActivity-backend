@@ -12,12 +12,7 @@ const app = new Hono()
 
 // Add CORS middleware
 app.use('/*', cors({
-  origin: ['http://localhost:5173', 'http://10.128.13.56:5173'], // Allow both localhost and LAN frontend
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  exposeHeaders: ['Content-Length', 'X-Kuma-Revision'],
-  maxAge: 600,
-  credentials: true,
+  origin: '*'
 }))
 
 // Add request logging middleware
@@ -62,7 +57,8 @@ app.get('/test', (c) => {
 console.log('Starting server...')
 serve({
   fetch: app.fetch,
-  port: 3000
+  port: 3000,
+  hostname: '0.0.0.0' // <-- Add this line
 }, (info) => {
   console.log(`Server is running on http://localhost:${info.port}`)
 })
