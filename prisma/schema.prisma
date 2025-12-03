@@ -42,10 +42,11 @@ model afterschoolactivity {
 
 model attendance {
   id              Int              @id @default(autoincrement())
-  sessionId       Int?            // made optional
-  userId          Int?            // made optional
-  status          String?         // made optional
-  createdAt       DateTime        @default(now())
+  sessionId       Int?             // made optional
+  userId          Int?             // made optional
+  status          String?          // made optional
+  processedBy     String?          @db.VarChar(255) // Add this line
+  createdAt       DateTime         @default(now())
   activitysession activitysession? @relation(fields: [sessionId], references: [id], map: "Attendance_sessionId_fkey")
   user            user?            @relation(fields: [userId], references: [id], map: "Attendance_userId_fkey")
 

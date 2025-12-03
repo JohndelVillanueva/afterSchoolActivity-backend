@@ -194,217 +194,244 @@ export const getActivityByIdController = async (c: Context): Promise<Response> =
 
 export const markAttendanceAndDeductController = async (c: Context): Promise<Response> => {
   try {
-    const { studentId, activityId, status } = await c.req.json();
-    if (!studentId || !activityId || !status) {
-      return c.json({ success: false, error: 'Missing studentId, activityId, or status' }, 400);
+    const body = await c.req.json();
+    const { 
+      studentId, 
+      activityId, 
+      status = 'present', 
+      processedBy = 'System'
+    } = body;
+
+    console.log('[DEBUG] Mark attendance request:', { 
+      studentId, 
+      activityId, 
+      status, 
+      processedBy 
+    });
+
+    if (!studentId || !activityId) {
+      return c.json({
+        success: false,
+        error: 'Missing studentId or activityId',
+      }, 400);
     }
 
-    // Validate status
-    if (status !== 'present' && status !== 'absent') {
-      return c.json({ success: false, error: 'Status must be either "present" or "absent"' }, 400);
-    }
-
-    // Get student and activity with additional email fields
-    const user = await prisma.user.findUnique({ 
+    // Find the student with user session info
+    const user = await prisma.user.findUnique({
       where: { id: Number(studentId) },
       select: {
         id: true,
-        rfid: true,
         fname: true,
-        mname: true,
         lname: true,
         email: true,
-        guardianemail: true, // Guardian email for notifications
-      }
+        guardianemail: true,
+        guardianname: true,
+      },
     });
-    
+
+    if (!user) {
+      return c.json({
+        success: false,
+        error: 'Student not found',
+      }, 404);
+    }
+
+    // Find the activity
     const activity = await prisma.afterschoolactivity.findUnique({
       where: { id: Number(activityId) },
-      select: { id: true, name: true, rate: true },
+      select: {
+        id: true,
+        name: true,
+        rate: true,
+      },
     });
-    
-    if (!user || !activity) {
-      return c.json({ success: false, error: 'Student or activity not found' }, 404);
+
+    if (!activity) {
+      return c.json({
+        success: false,
+        error: 'Activity not found',
+      }, 404);
     }
 
-    // Check if student is enrolled in the activity
-    const enrollment = await prisma.enrolledactivity.findFirst({
-      where: { userId: user.id, activityId: activity.id },
+    // Find user session for this activity
+    const userSession = await prisma.usersession.findFirst({
+      where: {
+        userId: user.id,
+        activityId: Number(activityId),
+      },
     });
-    if (!enrollment) {
-      return c.json({ success: false, error: 'Student is not enrolled in this activity.' }, 400);
+
+    if (!userSession) {
+      return c.json({
+        success: false,
+        error: 'User session not found for this activity',
+      }, 404);
     }
 
-    // Find or create today's activitysession for this activity
+    // Check if no sessions remaining (only for 'present' status)
+    if (status === 'present' && userSession.sessionsRemaining <= 0) {
+      return c.json({
+        success: false,
+        error: 'No sessions remaining for this student',
+      }, 400);
+    }
+
+    // Find today's session for this activity
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    let session = await prisma.activitysession.findFirst({
+
+    let activitySession = await prisma.activitysession.findFirst({
       where: {
-        activityId: activity.id,
-        date: today,
-      }
+        activityId: Number(activityId),
+        date: {
+          gte: today,
+          lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+        },
+      },
     });
-    if (!session) {
-      session = await prisma.activitysession.create({
+
+    // If no session exists for today, create one
+    if (!activitySession) {
+      activitySession = await prisma.activitysession.create({
         data: {
-          activityId: activity.id,
+          activityId: Number(activityId),
           date: today,
           updatedAt: new Date(),
         },
       });
     }
 
-    // Check if session is still null (should not happen, but for safety)
-    if (!session) {
-      return c.json({ success: false, error: 'Could not create or find session.' }, 500);
-    }
-
-    // Check if attendance already exists for this student in this session
+    // Check if attendance already exists for today
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
-        sessionId: session.id,
         userId: user.id,
+        sessionId: activitySession.id,
+        createdAt: {
+          gte: today,
+          lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+        },
       },
     });
 
     if (existingAttendance) {
-      return c.json({ success: false, error: 'Attendance already recorded for today.' }, 400);
+      return c.json({
+        success: false,
+        error: 'Attendance already marked for today',
+      }, 400);
     }
 
-    // Check user session BEFORE marking attendance
-    const userSession = await prisma.usersession.findUnique({
-      where: {
-        userId_activityId: {
-          userId: user.id,
-          activityId: activity.id,
-        }
-      }
-    });
-
-    // Validate if student has sessions remaining
-    if (userSession) {
-      // Check if sessions remaining is 0 or if attended equals purchased
-      if (userSession.sessionsRemaining <= 0 || userSession.sessionsAttended >= userSession.sessionsPurchased) {
-        return c.json({ 
-          success: false, 
-          error: 'No sessions remaining. Student has used all purchased sessions. Please purchase more sessions to continue.',
-          details: {
-            sessionsPurchased: userSession.sessionsPurchased,
-            sessionsAttended: userSession.sessionsAttended,
-            sessionsRemaining: userSession.sessionsRemaining
-          }
-        }, 400);
-      }
-    }
-
-    // Mark attendance for the student in this session with the provided status
-    await prisma.attendance.upsert({
-      where: {
-        sessionId_userId: {
-          sessionId: session.id,
-          userId: user.id,
-        },
-      },
-      update: { status: status },
-      create: {
-        sessionId: session.id,
-        userId: user.id,
-        status: status,
-      },
-    });
-
-    console.log(`[DEBUG] Attendance marked as ${status} for student:`, user.id);
-
-    // Update usersession to increment sessionsAttended and decrement sessionsRemaining
-    let updatedSessionData = {
-      sessionsAttended: 1,
-      sessionsRemaining: 0,
-      sessionsPurchased: 0
-    };
-
-    if (userSession) {
-      const newSessionsAttended = userSession.sessionsAttended + 1;
-      const newSessionsRemaining = Math.max(0, userSession.sessionsRemaining - 1);
-      
-      await prisma.usersession.update({
+    // STEP 1: Update session FIRST (if status is 'present')
+    let updatedSession = null;
+    if (status === 'present') {
+      // Update sessions by incrementing attended and decrementing remaining
+      updatedSession = await prisma.usersession.update({
         where: { id: userSession.id },
         data: {
-          sessionsAttended: newSessionsAttended,
-          sessionsRemaining: newSessionsRemaining,
+          sessionsAttended: { increment: 1 },
+          sessionsRemaining: { decrement: 1 },
           updatedAt: new Date(),
         },
       });
-      
-      updatedSessionData = {
-        sessionsAttended: newSessionsAttended,
-        sessionsRemaining: newSessionsRemaining,
-        sessionsPurchased: userSession.sessionsPurchased
-      };
-      
-      console.log(`[DEBUG] User session updated for ${status}: sessionsAttended=${newSessionsAttended}, sessionsRemaining=${newSessionsRemaining}`);
-    } else {
-      await prisma.usersession.create({
-        data: {
-          userId: user.id,
-          activityId: activity.id,
-          sessionId: session.id,
-          sessionsPurchased: 0,
-          sessionsAttended: 1,
-          sessionsRemaining: 0,
-        },
-      });
-      console.log(`[DEBUG] User session created with sessionsAttended = 1 for ${status}`);
+      console.log('[DEBUG] Sessions updated:', updatedSession);
     }
 
-    // Send email notification
-    const studentName = `${user.fname} ${user.mname || ''} ${user.lname}`.trim();
-    const dateString = today.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+    // STEP 2: Create attendance record AFTER updating sessions
+    const attendance = await prisma.attendance.create({
+      data: {
+        sessionId: activitySession.id,
+        userId: user.id,
+        status,
+        processedBy,
+      },
     });
 
-    // Check if student has an email
-    if (user.email && user.email.trim()) {
-      console.log(`[DEBUG] Sending attendance email to: ${user.email}`);
-      
-      const emailSent = await sendAttendanceEmail({
+    console.log('[DEBUG] Attendance created:', attendance.id);
+
+    // STEP 3: Fetch CURRENT session data for email (fetch fresh from database)
+    const currentSessionData = await prisma.usersession.findFirst({
+      where: {
+        userId: user.id,
+        activityId: Number(activityId),
+      },
+    });
+
+    if (!currentSessionData) {
+      return c.json({
+        success: false,
+        error: 'Failed to fetch current session data',
+      }, 500);
+    }
+
+    console.log('[DEBUG] Current session data for email:', {
+      purchased: currentSessionData.sessionsPurchased,
+      attended: currentSessionData.sessionsAttended,
+      remaining: currentSessionData.sessionsRemaining
+    });
+
+    // STEP 4: Send email with CURRENT session data
+    let emailSent = false;
+    try {
+      const studentName = `${user.fname} ${user.lname}`;
+      const currentDate = new Date().toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+
+      // Prepare email options with CURRENT session data
+      const emailOptions = {
         studentName,
-        studentEmail: user.email,
-        guardianEmail: user.guardianemail || undefined,
+        studentEmail: user.email || '',
         activityName: activity.name,
         status,
-        date: dateString,
-        sessionsRemaining: updatedSessionData.sessionsRemaining,
-        sessionsAttended: updatedSessionData.sessionsAttended,
-        sessionsPurchased: updatedSessionData.sessionsPurchased,
-      });
+        date: currentDate,
+        guardianEmail: user.guardianemail || undefined,
+        sessionsRemaining: currentSessionData.sessionsRemaining,
+        sessionsAttended: currentSessionData.sessionsAttended,
+        sessionsPurchased: currentSessionData.sessionsPurchased,
+      };
 
+      console.log('[DEBUG] Sending email with CURRENT session data:', {
+        remaining: emailOptions.sessionsRemaining,
+        attended: emailOptions.sessionsAttended,
+        purchased: emailOptions.sessionsPurchased
+      });
+      
+      emailSent = await sendAttendanceEmail(emailOptions);
+      
       if (emailSent) {
-        console.log(`[DEBUG] Email sent successfully to ${user.email}`);
+        console.log('[DEBUG] Email sent successfully with current session counts');
       } else {
-        console.warn(`[WARN] Failed to send email to ${user.email}`);
+        console.log('[WARN] Email sending failed');
       }
-    } else {
-      console.warn(`[WARN] Student ${user.id} has no email address. Skipping email notification.`);
+    } catch (emailError) {
+      console.error('[ERROR] Failed to send email:', emailError);
+      emailSent = false;
     }
 
-    return c.json({ 
+    return c.json({
       success: true,
-      message: `Attendance marked as ${status} successfully`,
+      message: `Attendance marked as ${status}${status === 'present' ? ' and payment deducted successfully' : ''}`,
       data: {
-        studentId: user.id,
-        activityId: activity.id,
-        sessionDate: today.toISOString().split('T')[0],
-        status: status,
-        emailSent: !!(user.email && user.email.trim()),
-      }
+        attendance,
+        updatedSession: status === 'present' ? updatedSession : null,
+        currentSessionData: {
+          sessionsPurchased: currentSessionData.sessionsPurchased,
+          sessionsAttended: currentSessionData.sessionsAttended,
+          sessionsRemaining: currentSessionData.sessionsRemaining,
+        },
+        deductedAmount: status === 'present' ? activity.rate : 0,
+        processedBy,
+        emailSent,
+      },
     });
+
   } catch (error) {
-    console.error('[ERROR] Mark attendance and deduct:', error);
-    return c.json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Internal server error' 
+    console.error('[ERROR] Error marking attendance and deducting payment:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
     }, 500);
   }
 };
@@ -479,12 +506,13 @@ export const getAllAttendanceTransactionsController = async (c: Context): Promis
 
       return {
         id: record.id.toString(),
-        studentName: `${user.fname || ''} ${user.mname || ''} ${user.lname || ''}`.replace(/\s+/g, ' ').trim(),
-        rfid: user.rfid?.toString() || "",
+        studentName: `${user?.fname || ''} ${user?.mname || ''} ${user?.lname || ''}`.replace(/\s+/g, ' ').trim(),
+        rfid: user?.rfid?.toString() || "",
         activity: activity?.name || 'Unknown Activity',
         date: session?.date ? session.date.toISOString().split('T')[0] : '',
         time: record.createdAt.toISOString(),
         status: record.status || 'absent',
+        processedBy: record.processedBy || null, // Add this line
       };
     });
 

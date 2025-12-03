@@ -1132,3 +1132,460 @@ export const logoutController = async (c: Context): Promise<Response> => {
     }, 500);
   }
 };
+
+export const getStudentDetailsController = async (c: Context): Promise<Response> => {
+  try {
+    const studentId = c.req.param('id');
+    
+    console.log(`[DEBUG] Fetching student details for ID: ${studentId}`);
+    
+    if (!studentId) {
+      return c.json({ 
+        success: false, 
+        error: 'Student ID is required' 
+      }, 400);
+    }
+    
+    const id = Number(studentId);
+    if (isNaN(id)) {
+      return c.json({ 
+        success: false, 
+        error: 'Invalid student ID format' 
+      }, 400);
+    }
+
+    // Fetch student with only the specific fields needed
+    const student = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        rfid: true,
+        fname: true,
+        lname: true,
+        email: true,
+        username: true,
+        // Guardian information
+        guardianname: true,
+        guardianemail: true,
+        guardianphone: true,
+        // Additional basic info
+        grade: true,
+        dob: true,
+        vacchist: true,
+        isEnrolledInAfterSchool: true,
+        // NOTE: createdAt and updatedAt don't exist in user model!
+        // Enrolled activities with activity details
+        enrolledactivity: {
+          select: {
+            id: true,
+            enrollmentDate: true,
+            afterschoolactivity: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                dayOfWeek: true,
+                startTime: true,
+                endTime: true,
+                location: true,
+                coachName: true,
+                rate: true,
+              }
+            }
+          }
+        },
+        // User sessions information
+        usersession: {
+          select: {
+            id: true,
+            activityId: true,
+            sessionId: true,
+            sessionsPurchased: true,
+            sessionsAttended: true,
+            sessionsRemaining: true,
+            createdAt: true,
+            updatedAt: true,
+            afterschoolactivity: {
+              select: {
+                name: true,
+                dayOfWeek: true,
+                startTime: true,
+              }
+            }
+          }
+        },
+        // Attendance history
+        attendance: {
+          select: {
+            id: true,
+            sessionId: true,
+            status: true,
+            createdAt: true,
+            activitysession: {
+              select: {
+                date: true,
+                afterschoolactivity: {
+                  select: {
+                    name: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: {
+            createdAt: 'desc'
+          }
+        }
+      }
+    });
+
+    console.log(`[DEBUG] Student found: ${student ? 'Yes' : 'No'}`);
+
+    if (!student) {
+      return c.json({ 
+        success: false, 
+        error: 'Student not found' 
+      }, 404);
+    }
+
+    // Get the latest usersession to use its timestamps
+    const latestSession = student.usersession?.[0];
+    
+    // Format the response to match the frontend interface
+    const formattedStudent = {
+      id: student.id,
+      rfid: student.rfid?.toString() || '',
+      fname: student.fname || '',
+      lname: student.lname || '',
+      email: student.email || '',
+      username: student.username || '',
+      grade: student.grade || '',
+      parentName: student.guardianname || '',
+      parentEmail: student.guardianemail || '',
+      parentPhone: student.guardianphone || '',
+      address: '', // Not in schema
+      dateOfBirth: student.dob ? student.dob.toISOString().split('T')[0] : '',
+      emergencyContact: student.guardianphone || '',
+      medicalNotes: student.vacchist || '',
+      isEnrolledInAfterSchool: student.isEnrolledInAfterSchool || false,
+      // Calculate session totals from usersession (safe calculation)
+      sessionsPurchased: student.usersession?.reduce((sum, session) => sum + (session.sessionsPurchased || 0), 0) || 0,
+      sessionsAttended: student.usersession?.reduce((sum, session) => sum + (session.sessionsAttended || 0), 0) || 0,
+      sessionsRemaining: student.usersession?.reduce((sum, session) => sum + (session.sessionsRemaining || 0), 0) || 0,
+      // Use current date or session dates since user model doesn't have these fields
+      createdAt: latestSession?.createdAt?.toISOString() || new Date().toISOString(),
+      updatedAt: latestSession?.updatedAt?.toISOString() || new Date().toISOString(),
+      // Format activities (handle empty array)
+      activities: student.enrolledactivity?.map(enrollment => ({
+        id: enrollment.id,
+        name: enrollment.afterschoolactivity?.name || '',
+        dayOfWeek: enrollment.afterschoolactivity?.dayOfWeek || '',
+        startTime: enrollment.afterschoolactivity?.startTime?.toISOString() || '',
+        enrolledDate: enrollment.enrollmentDate?.toISOString() || '',
+      })) || [],
+      // Format attendance history (handle empty array)
+      attendanceHistory: student.attendance?.map(attendance => ({
+        date: attendance.activitysession?.date?.toISOString().split('T')[0] || '',
+        activityName: attendance.activitysession?.afterschoolactivity?.name || '',
+        status: attendance.status || '',
+        checkInTime: attendance.createdAt?.toISOString() || '',
+      })) || [],
+    };
+
+    console.log(`[DEBUG] Returning formatted student data for ID: ${student.id}`);
+
+    return c.json({
+      success: true,
+      data: formattedStudent,
+    }, 200);
+
+  } catch (error: any) {
+    console.error('[ERROR] Error fetching student details:', error);
+    console.error('[ERROR] Stack trace:', error.stack);
+    
+    return c.json({
+      success: false,
+      error: error?.message || 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    }, 500);
+  }
+};
+
+// Update student information with only specific fields
+export const updateStudentController = async (c: Context): Promise<Response> => {
+  try {
+    const studentId = c.req.param('id');
+    
+    console.log(`[DEBUG] Updating student ID: ${studentId}`);
+    
+    if (!studentId) {
+      return c.json({ 
+        success: false, 
+        error: 'Student ID is required' 
+      }, 400);
+    }
+    
+    const id = Number(studentId);
+    if (isNaN(id)) {
+      return c.json({ 
+        success: false, 
+        error: 'Invalid student ID format' 
+      }, 400);
+    }
+
+    const body = await c.req.json();
+    console.log(`[DEBUG] Update data:`, JSON.stringify(body, null, 2));
+    
+    // Check if student exists
+    const existingStudent = await prisma.user.findUnique({
+      where: { id }
+    });
+
+    if (!existingStudent) {
+      return c.json({ 
+        success: false, 
+        error: 'Student not found' 
+      }, 404);
+    }
+
+    // Map frontend fields to database fields
+    const updateData: any = {};
+    
+    // Student basic info
+    if (body.fname !== undefined) updateData.fname = body.fname;
+    if (body.lname !== undefined) updateData.lname = body.lname;
+    if (body.email !== undefined) updateData.email = body.email;
+    if (body.username !== undefined) updateData.username = body.username;
+    if (body.grade !== undefined) updateData.grade = body.grade;
+    
+    // Guardian info
+    if (body.parentName !== undefined) updateData.guardianname = body.parentName;
+    if (body.parentEmail !== undefined) updateData.guardianemail = body.parentEmail;
+    if (body.parentPhone !== undefined) updateData.guardianphone = body.parentPhone;
+    if (body.emergencyContact !== undefined) updateData.guardianphone = body.emergencyContact;
+    
+    // Medical notes
+    if (body.medicalNotes !== undefined) updateData.vacchist = body.medicalNotes;
+    
+    // Date of birth - handle empty string or invalid dates
+    if (body.dateOfBirth !== undefined) {
+      if (body.dateOfBirth && body.dateOfBirth.trim() !== '') {
+        try {
+          const date = new Date(body.dateOfBirth);
+          if (!isNaN(date.getTime())) {
+            updateData.dob = date;
+          } else {
+            console.error('[ERROR] Invalid date format:', body.dateOfBirth);
+            // Don't update dob if it's invalid
+          }
+        } catch (e) {
+          console.error('[ERROR] Error parsing date:', body.dateOfBirth, e);
+        }
+      } else {
+        // If dateOfBirth is empty string, set it to null
+        updateData.dob = null;
+      }
+    }
+
+    console.log(`[DEBUG] Update data to save:`, updateData);
+
+    // Update the student
+    const updatedStudent = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        rfid: true,
+        fname: true,
+        lname: true,
+        email: true,
+        username: true,
+        grade: true,
+        guardianname: true,
+        guardianemail: true,
+        guardianphone: true,
+        dob: true,
+        vacchist: true,
+        isEnrolledInAfterSchool: true,
+      }
+    });
+
+    // Format response
+    const formattedStudent = {
+      id: updatedStudent.id,
+      rfid: updatedStudent.rfid?.toString() || '',
+      fname: updatedStudent.fname || '',
+      lname: updatedStudent.lname || '',
+      email: updatedStudent.email || '',
+      username: updatedStudent.username || '',
+      grade: updatedStudent.grade || '',
+      parentName: updatedStudent.guardianname || '',
+      parentEmail: updatedStudent.guardianemail || '',
+      parentPhone: updatedStudent.guardianphone || '',
+      dateOfBirth: updatedStudent.dob ? updatedStudent.dob.toISOString().split('T')[0] : '',
+      emergencyContact: updatedStudent.guardianphone || '',
+      medicalNotes: updatedStudent.vacchist || '',
+      isEnrolledInAfterSchool: updatedStudent.isEnrolledInAfterSchool || false,
+      // Use current date since user model doesn't have createdAt/updatedAt
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    console.log(`[DEBUG] Student updated successfully: ${updatedStudent.id}`);
+
+    return c.json({
+      success: true,
+      message: 'Student updated successfully',
+      data: formattedStudent,
+    }, 200);
+
+  } catch (error: any) {
+    console.error('[ERROR] Error updating student:', error);
+    console.error('[ERROR] Stack trace:', error.stack);
+    
+    return c.json({
+      success: false,
+      error: error?.message || 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+    }, 500);
+  }
+};
+
+// Get student's session information
+export const getStudentSessionsController = async (c: Context): Promise<Response> => {
+  try {
+    const studentId = c.req.param('id');
+    
+    if (!studentId) {
+      return c.json({ 
+        success: false, 
+        error: 'Student ID is required' 
+      }, 400);
+    }
+    
+    const id = Number(studentId);
+    if (isNaN(id)) {
+      return c.json({ 
+        success: false, 
+        error: 'Invalid student ID format' 
+      }, 400);
+    }
+
+    // Fetch user sessions
+    const userSessions = await prisma.usersession.findMany({
+      where: { userId: id },
+      include: {
+        afterschoolactivity: {
+          select: {
+            name: true,
+            dayOfWeek: true,
+            startTime: true,
+          }
+        }
+      }
+    });
+
+    // Calculate totals
+    const totals = userSessions.reduce((acc, session) => ({
+      purchased: acc.purchased + session.sessionsPurchased,
+      attended: acc.attended + session.sessionsAttended,
+      remaining: acc.remaining + session.sessionsRemaining,
+    }), { purchased: 0, attended: 0, remaining: 0 });
+
+    return c.json({
+      success: true,
+      data: {
+        sessions: userSessions.map(session => ({
+          id: session.id,
+          activityName: session.afterschoolactivity.name,
+          dayOfWeek: session.afterschoolactivity.dayOfWeek,
+          startTime: session.afterschoolactivity.startTime,
+          sessionsPurchased: session.sessionsPurchased,
+          sessionsAttended: session.sessionsAttended,
+          sessionsRemaining: session.sessionsRemaining,
+        })),
+        totals,
+      }
+    }, 200);
+
+  } catch (error) {
+    console.error('[ERROR] Error fetching student sessions:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+// Update student's session information
+export const updateStudentSessionsController = async (c: Context): Promise<Response> => {
+  try {
+    const studentId = c.req.param('id');
+    const body = await c.req.json();
+    
+    if (!studentId) {
+      return c.json({ 
+        success: false, 
+        error: 'Student ID is required' 
+      }, 400);
+    }
+    
+    const id = Number(studentId);
+    if (isNaN(id)) {
+      return c.json({ 
+        success: false, 
+        error: 'Invalid student ID format' 
+      }, 400);
+    }
+
+    const { activityId, sessionsPurchased, sessionsAttended } = body;
+    
+    if (!activityId) {
+      return c.json({ 
+        success: false, 
+        error: 'Activity ID is required' 
+      }, 400);
+    }
+
+    // Find the user session
+    const userSession = await prisma.usersession.findFirst({
+      where: {
+        userId: id,
+        activityId: Number(activityId)
+      }
+    });
+
+    if (!userSession) {
+      return c.json({ 
+        success: false, 
+        error: 'User session not found for this activity' 
+      }, 404);
+    }
+
+    // Update the session
+    const updatedSession = await prisma.usersession.update({
+      where: { id: userSession.id },
+      data: {
+        sessionsPurchased: sessionsPurchased !== undefined ? Number(sessionsPurchased) : undefined,
+        sessionsAttended: sessionsAttended !== undefined ? Number(sessionsAttended) : undefined,
+        sessionsRemaining: sessionsPurchased !== undefined 
+          ? Number(sessionsPurchased) - (sessionsAttended !== undefined ? Number(sessionsAttended) : userSession.sessionsAttended)
+          : undefined,
+        updatedAt: new Date(),
+      }
+    });
+
+    return c.json({
+      success: true,
+      message: 'Student sessions updated successfully',
+      data: updatedSession,
+    }, 200);
+
+  } catch (error) {
+    console.error('[ERROR] Error updating student sessions:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
