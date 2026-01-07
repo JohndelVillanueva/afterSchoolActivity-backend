@@ -199,14 +199,16 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
       studentId, 
       activityId, 
       status = 'present', 
-      processedBy = 'System'
+      processedBy = 'System',
+      date  // ✅ NEW: Accept date parameter
     } = body;
 
     console.log('[DEBUG] Mark attendance request:', { 
       studentId, 
       activityId, 
       status, 
-      processedBy 
+      processedBy,
+      date 
     });
 
     if (!studentId || !activityId) {
@@ -215,6 +217,19 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
         error: 'Missing studentId or activityId',
       }, 400);
     }
+
+    // ✅ Parse the target date (default to today if not provided)
+    let targetDate = new Date();
+    if (date) {
+      targetDate = new Date(date);
+      if (isNaN(targetDate.getTime())) {
+        return c.json({
+          success: false,
+          error: 'Invalid date format',
+        }, 400);
+      }
+    }
+    targetDate.setHours(0, 0, 0, 0);
 
     // Find the student with user session info
     const user = await prisma.user.findUnique({
@@ -276,54 +291,46 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
       }, 400);
     }
 
-    // Find today's session for this activity
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
+    // ✅ Find or create session for the TARGET DATE (not today)
     let activitySession = await prisma.activitysession.findFirst({
       where: {
         activityId: Number(activityId),
         date: {
-          gte: today,
-          lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+          gte: targetDate,
+          lt: new Date(targetDate.getTime() + 24 * 60 * 60 * 1000),
         },
       },
     });
 
-    // If no session exists for today, create one
+    // If no session exists for the target date, create one
     if (!activitySession) {
       activitySession = await prisma.activitysession.create({
         data: {
           activityId: Number(activityId),
-          date: today,
+          date: targetDate,
           updatedAt: new Date(),
         },
       });
     }
 
-    // Check if attendance already exists for today
+    // ✅ Check if attendance already exists for THIS SESSION (not by createdAt)
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
         userId: user.id,
-        sessionId: activitySession.id,
-        createdAt: {
-          gte: today,
-          lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
-        },
+        sessionId: activitySession.id,  // ✅ Only check by sessionId
       },
     });
 
     if (existingAttendance) {
       return c.json({
         success: false,
-        error: 'Attendance already marked for today',
+        error: 'Attendance already marked for this date',
       }, 400);
     }
 
     // STEP 1: Update session FIRST (if status is 'present')
     let updatedSession = null;
     if (status === 'present') {
-      // Update sessions by incrementing attended and decrementing remaining
       updatedSession = await prisma.usersession.update({
         where: { id: userSession.id },
         data: {
@@ -335,7 +342,7 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
       console.log('[DEBUG] Sessions updated:', updatedSession);
     }
 
-    // STEP 2: Create attendance record AFTER updating sessions
+    // STEP 2: Create attendance record
     const attendance = await prisma.attendance.create({
       data: {
         sessionId: activitySession.id,
@@ -347,7 +354,7 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
 
     console.log('[DEBUG] Attendance created:', attendance.id);
 
-    // STEP 3: Fetch CURRENT session data for email (fetch fresh from database)
+    // STEP 3: Fetch current session data for email
     const currentSessionData = await prisma.usersession.findFirst({
       where: {
         userId: user.id,
@@ -362,24 +369,17 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
       }, 500);
     }
 
-    console.log('[DEBUG] Current session data for email:', {
-      purchased: currentSessionData.sessionsPurchased,
-      attended: currentSessionData.sessionsAttended,
-      remaining: currentSessionData.sessionsRemaining
-    });
-
-    // STEP 4: Send email with CURRENT session data
+    // STEP 4: Send email
     let emailSent = false;
     try {
       const studentName = `${user.fname} ${user.lname}`;
-      const currentDate = new Date().toLocaleDateString('en-US', {
+      const currentDate = targetDate.toLocaleDateString('en-US', {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
         day: 'numeric',
       });
 
-      // Prepare email options with CURRENT session data
       const emailOptions = {
         studentName,
         studentEmail: user.email || '',
@@ -392,22 +392,13 @@ export const markAttendanceAndDeductController = async (c: Context): Promise<Res
         sessionsPurchased: currentSessionData.sessionsPurchased,
       };
 
-      console.log('[DEBUG] Sending email with CURRENT session data:', {
-        remaining: emailOptions.sessionsRemaining,
-        attended: emailOptions.sessionsAttended,
-        purchased: emailOptions.sessionsPurchased
-      });
-      
       emailSent = await sendAttendanceEmail(emailOptions);
       
       if (emailSent) {
-        console.log('[DEBUG] Email sent successfully with current session counts');
-      } else {
-        console.log('[WARN] Email sending failed');
+        console.log('[DEBUG] Email sent successfully');
       }
     } catch (emailError) {
       console.error('[ERROR] Failed to send email:', emailError);
-      emailSent = false;
     }
 
     return c.json({
@@ -690,6 +681,355 @@ export const deleteSportController = async (c: Context): Promise<Response> => {
   } catch (error: any) {
     console.error('[ERROR] Error deleting sport:', error);
 
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+export const getStudentsWithSessionsController = async (c: Context): Promise<Response> => {
+  try {
+    const activityId = Number(c.req.param('id'));
+    const dateParam = c.req.query('date'); // Get date from query parameter
+    
+    if (isNaN(activityId)) {
+      return c.json({ 
+        success: false, 
+        error: 'Invalid activity ID' 
+      }, 400);
+    }
+
+    // Parse the date or use today
+    let targetDate = new Date();
+    if (dateParam) {
+      targetDate = new Date(dateParam);
+      if (isNaN(targetDate.getTime())) {
+        return c.json({
+          success: false,
+          error: 'Invalid date format. Use YYYY-MM-DD',
+        }, 400);
+      }
+    }
+    
+    // Set to start of day
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(targetDate.getTime() + 24 * 60 * 60 * 1000);
+
+    // Get the activity details
+    const activity = await prisma.afterschoolactivity.findUnique({
+      where: { id: activityId },
+    });
+
+    if (!activity) {
+      return c.json({ 
+        success: false, 
+        error: 'Activity not found' 
+      }, 404);
+    }
+
+    // Check if the selected date matches the activity's day of week
+    const selectedDayName = targetDate.toLocaleDateString('en-US', { weekday: 'long' });
+    const isCorrectDay = activity.dayOfWeek === selectedDayName;
+
+    // Get all enrollments for this activity with user and session data
+    const enrollments = await prisma.enrolledactivity.findMany({
+      where: { activityId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            rfid: true,
+            fname: true,
+            mname: true,
+            lname: true,
+            email: true,
+            grade: true,
+            position: true,
+            isEnrolledInAfterSchool: true,
+          },
+        },
+      },
+    });
+
+    // For each enrollment, get their session data and attendance for the selected date
+    const studentsWithSessions = await Promise.all(
+      enrollments.map(async (enrollment) => {
+        const userSession = await prisma.usersession.findFirst({
+          where: {
+            userId: enrollment.userId,
+            activityId: activityId,
+          },
+        });
+
+        // Get attendance for the selected date
+        const dateSession = await prisma.activitysession.findFirst({
+          where: {
+            activityId: activityId,
+            date: {
+              gte: targetDate,
+              lt: nextDay,
+            },
+          },
+        });
+
+        let dateAttendance = null;
+        if (dateSession) {
+          dateAttendance = await prisma.attendance.findFirst({
+            where: {
+              userId: enrollment.userId,
+              sessionId: dateSession.id,
+            },
+          });
+        }
+
+        return {
+          id: enrollment.user.id,
+          rfid: enrollment.user.rfid?.toString() || '',
+          fname: enrollment.user.fname,
+          mname: enrollment.user.mname,
+          lname: enrollment.user.lname,
+          email: enrollment.user.email,
+          grade: enrollment.user.grade,
+          enrolledDate: enrollment.enrollmentDate,
+          sessionsPurchased: userSession?.sessionsPurchased || 0,
+          sessionsAttended: userSession?.sessionsAttended || 0,
+          sessionsRemaining: userSession?.sessionsRemaining || 0,
+          hasAttendanceOnDate: !!dateAttendance,
+          dateAttendanceStatus: dateAttendance?.status || null,
+          dateAttendanceTime: dateAttendance?.createdAt || null,
+          processedBy: dateAttendance?.processedBy || null,
+        };
+      })
+    );
+
+    return c.json({
+      success: true,
+      data: {
+        activity: {
+          id: activity.id,
+          name: activity.name,
+          dayOfWeek: activity.dayOfWeek,
+          startTime: activity.startTime,
+          endTime: activity.endTime,
+          location: activity.location,
+          coachName: activity.coachName,
+          rate: activity.rate,
+        },
+        selectedDate: targetDate.toISOString().split('T')[0],
+        isCorrectDay,
+        selectedDayName,
+        students: studentsWithSessions,
+        summary: {
+          totalEnrolled: studentsWithSessions.length,
+          presentOnDate: studentsWithSessions.filter(s => s.dateAttendanceStatus === 'present').length,
+          absentOnDate: studentsWithSessions.filter(s => s.dateAttendanceStatus === 'absent').length,
+          notMarked: studentsWithSessions.filter(s => !s.hasAttendanceOnDate).length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[ERROR] Error fetching students with sessions:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+/**
+ * Get weekly schedule view for all activities
+ * Shows which activities are happening on which days
+ */
+export const getWeeklyScheduleController = async (c: Context): Promise<Response> => {
+  try {
+    // Get all activities
+    const activities = await prisma.afterschoolactivity.findMany({
+      orderBy: [
+        { dayOfWeek: 'asc' },
+        { startTime: 'asc' },
+      ],
+    });
+
+    // Get enrollment counts for each activity
+    const activitiesWithCounts = await Promise.all(
+      activities.map(async (activity) => {
+        const enrollmentCount = await prisma.enrolledactivity.count({
+          where: { activityId: activity.id },
+        });
+
+        // Get today's attendance count if it's the activity's day
+        const today = new Date();
+        const todayDayName = today.toLocaleDateString('en-US', { weekday: 'long' });
+        
+        let attendanceCount = 0;
+        if (activity.dayOfWeek === todayDayName) {
+          today.setHours(0, 0, 0, 0);
+          
+          const todaySession = await prisma.activitysession.findFirst({
+            where: {
+              activityId: activity.id,
+              date: {
+                gte: today,
+                lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+              },
+            },
+          });
+
+          if (todaySession) {
+            attendanceCount = await prisma.attendance.count({
+              where: {
+                sessionId: todaySession.id,
+                status: 'present',
+              },
+            });
+          }
+        }
+
+        return {
+          ...activity,
+          enrollmentCount,
+          attendanceToday: attendanceCount,
+          isToday: activity.dayOfWeek === todayDayName,
+        };
+      })
+    );
+
+    // Group by day of week
+    const daysOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const groupedByDay: { [key: string]: typeof activitiesWithCounts } = {};
+    
+    daysOrder.forEach(day => {
+      groupedByDay[day] = activitiesWithCounts.filter(a => a.dayOfWeek === day);
+    });
+
+    return c.json({
+      success: true,
+      data: {
+        schedule: groupedByDay,
+        allActivities: activitiesWithCounts,
+        summary: {
+          totalActivities: activities.length,
+          totalEnrollments: activitiesWithCounts.reduce((sum, a) => sum + a.enrollmentCount, 0),
+          activitiesToday: activitiesWithCounts.filter(a => a.isToday).length,
+          attendanceToday: activitiesWithCounts.reduce((sum, a) => sum + a.attendanceToday, 0),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[ERROR] Error fetching weekly schedule:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+/**
+ * Get attendance history for a specific date range
+ * Useful for generating reports
+ */
+export const getAttendanceByDateRangeController = async (c: Context): Promise<Response> => {
+  try {
+    const startDateParam = c.req.query('startDate');
+    const endDateParam = c.req.query('endDate');
+    const activityIdParam = c.req.query('activityId');
+
+    if (!startDateParam || !endDateParam) {
+      return c.json({
+        success: false,
+        error: 'startDate and endDate are required',
+      }, 400);
+    }
+
+    const startDate = new Date(startDateParam);
+    const endDate = new Date(endDateParam);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return c.json({
+        success: false,
+        error: 'Invalid date format. Use YYYY-MM-DD',
+      }, 400);
+    }
+
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    // Build where clause
+    const whereClause: any = {
+      date: {
+        gte: startDate,
+        lte: endDate,
+      },
+    };
+
+    if (activityIdParam) {
+      whereClause.activityId = Number(activityIdParam);
+    }
+
+    // Get activity sessions in the date range
+    const sessions = await prisma.activitysession.findMany({
+      where: whereClause,
+      include: {
+        afterschoolactivity: true,
+        attendance: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                rfid: true,
+                fname: true,
+                mname: true,
+                lname: true,
+                email: true,
+                grade: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        date: 'desc',
+      },
+    });
+
+    // Transform the data
+    const attendanceRecords = sessions.flatMap(session =>
+      session.attendance.map(record => ({
+        date: session.date.toISOString().split('T')[0],
+        activityName: session.afterschoolactivity.name,
+        activityDay: session.afterschoolactivity.dayOfWeek,
+        studentId: record.user.id,
+        studentName: `${record.user.fname} ${record.user.mname || ''} ${record.user.lname}`.replace(/\s+/g, ' ').trim(),
+        rfid: record.user.rfid?.toString() || '',
+        grade: record.user.grade,
+        status: record.status,
+        processedBy: record.processedBy,
+        markedAt: record.createdAt,
+      }))
+    );
+
+    // Calculate summary statistics
+    const summary = {
+      totalSessions: sessions.length,
+      totalAttendanceRecords: attendanceRecords.length,
+      presentCount: attendanceRecords.filter(r => r.status === 'present').length,
+      absentCount: attendanceRecords.filter(r => r.status === 'absent').length,
+      dateRange: {
+        start: startDateParam,
+        end: endDateParam,
+      },
+    };
+
+    return c.json({
+      success: true,
+      data: {
+        records: attendanceRecords,
+        summary,
+      },
+    });
+  } catch (error) {
+    console.error('[ERROR] Error fetching attendance by date range:', error);
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Internal server error',

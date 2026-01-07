@@ -36,8 +36,9 @@ model afterschoolactivity {
   enrolledactivity enrolledactivity[]
   usersession      usersession[]
   rate             Decimal            @db.Decimal(10,2) @default(0.00)
-
-  @@unique([name, startTime])
+  
+  // For the reverse relationship (each activity can have multiple coaches)
+  coaches          user[]             @relation("CoachedActivity")
 }
 
 model attendance {
@@ -203,7 +204,7 @@ model type_of_products {
 
 model user {
   id               Int                @id @default(autoincrement())
-  rfid             BigInt?             @unique
+  rfid             BigInt?            @unique
   fname            String             @db.MediumText
   mname            String             @db.MediumText
   lname            String             @db.MediumText
@@ -253,7 +254,11 @@ model user {
   attendance       attendance[]
   enrolledactivity enrolledactivity[]
   usersession      usersession[]
-  isEnrolledInAfterSchool Boolean @default(false)
+  isEnrolledInAfterSchool Int @default(0)
+  
+  // For coaches to reference their coached activity
+  coachedActivityId Int?
+  coachedActivity   afterschoolactivity? @relation("CoachedActivity", fields: [coachedActivityId], references: [id])
 }
 
 model user22 {

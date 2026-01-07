@@ -54,162 +54,462 @@ export const getAllUsersController = async (c: Context): Promise<Response> => {
 };
 
 export const createCoachController = async (c: Context): Promise<Response> => {
-  try {
-    const body = await c.req.json();
-    const { fname, lname, email, rfid, gender = '', mobile = '' } = body;
-    
-    console.log('[DEBUG] Create coach request body:', body);
-    
-    if (!fname || !lname || !email || !rfid) {
-      console.log('[ERROR] Missing required fields:', { fname, lname, email, rfid });
-      return c.json({ success: false, error: 'Missing required fields' }, 400);
-    }
-    
-    // Check if coach with same RFID or email exists
-    const existing = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { rfid: BigInt(rfid) },
-          { email: email }
-        ]
-      }
-    });
-    
-    if (existing) {
-      return c.json({ success: false, error: 'Coach with this RFID or email already exists' }, 400);
-    }
-    
-    const coach = await prisma.user.create({
-      data: {
-        rfid: BigInt(rfid),
-        fname,
-        mname: '',
-        lname,
-        type: 'coach',
-        gender,
-        position: 'coach',
-        grade: '',
-        section: '',
-        dob: null,
-        email,
-        mobile,
-        vacchist: '',
-        photo: '',
-        manager: '',
-        isactive: 1,
-        is_situation: '',
-        username: email,
-        password: '',
-        level: 1,
-        status: 1,
-        prevsch: '',
-        prevschcountry: '',
-        lrn: '',
-        uniqid: '',
-        tf: '',
-        country: '',
-        nationality: '',
-        nationalities: '',
-        guardianname: '',
-        guardianemail: '',
-        guardianphone: '',
-        referral: '',
-        apptype: '',
-        sy: '',
-        strand: '',
-        religion: '',
-        visa: '',
-        earlybird: 0,
-        modelrelease: 0,
-        feepolicy: 0,
-        refund: 0,
-        tos: 0,
-        empno: '',
-        isESL: 0,
-        house: '',
-        isofficial: 0,
-        isEnrolledInAfterSchool: false,
-      }
-    });
-    
-    // Convert BigInt to string before returning
-    const coachWithStringRfid = {
-      ...coach,
-      rfid: coach.rfid?.toString(),
-    };
-    
-    return c.json({ success: true, data: coachWithStringRfid }, 201);
-  } catch (error) {
-    console.error('[ERROR] Error creating coach:', error);
-    return c.json({ success: false, error: error instanceof Error ? error.message : 'Internal server error' }, 500);
-  }
+  try {
+    const body = await c.req.json();
+    const { fname, lname, email, rfid, gender = '', mobile = '', activityId } = body;
+    
+    console.log('[DEBUG] Create coach request body:', body);
+    
+    // Validate required fields
+    if (!fname || !lname || !email || !rfid || !activityId) {
+      console.log('[ERROR] Missing required fields:', { fname, lname, email, rfid, activityId });
+      return c.json({ 
+        success: false, 
+        error: 'Missing required fields: first name, last name, email, RFID, and activity' 
+      }, 400);
+    }
+    
+    // Validate RFID format
+    if (!rfid.match(/^\d+$/)) {
+      return c.json({ 
+        success: false, 
+        error: 'RFID must contain only numbers' 
+      }, 400);
+    }
+    
+    // Convert RFID to BigInt
+    const rfidBigInt = BigInt(rfid);
+    
+    // ============================================
+    // CHECK 1: Check if RFID exists in database
+    // ============================================
+    const existingUserByRfid = await prisma.user.findFirst({
+      where: { rfid: rfidBigInt }
+    });
+    
+    console.log('[DEBUG] RFID check result:', {
+      rfid: rfid,
+      exists: !!existingUserByRfid,
+      userId: existingUserByRfid?.id,
+      type: existingUserByRfid?.type
+    });
+    
+    if (existingUserByRfid) {
+      // RFID exists in database
+      const existingName = `${existingUserByRfid.fname} ${existingUserByRfid.lname}`;
+      const existingType = existingUserByRfid.type || existingUserByRfid.position || 'user';
+      
+      // Check if already a coach
+      if (existingUserByRfid.type === 'coach') {
+        return c.json({ 
+          success: false, 
+          error: `RFID ${rfid} already assigned to coach ${existingName}`,
+          details: {
+            existingUser: {
+              id: existingUserByRfid.id,
+              name: existingName,
+              type: existingType,
+              email: existingUserByRfid.email,
+              rfid: existingUserByRfid.rfid?.toString(),
+              coachedActivityId: existingUserByRfid.coachedActivityId
+            }
+          },
+          userExists: true
+        }, 409);
+      }
+      
+      // If not a coach, we'll convert this user to coach
+      console.log(`[DEBUG] RFID ${rfid} exists for ${existingType} ${existingName}, will convert to coach`);
+    }
+    
+    // ============================================
+    // CHECK 2: Check if email exists for coaches
+    // ============================================
+    const existingCoachByEmail = await prisma.user.findFirst({
+      where: {
+        email: email,
+        type: 'coach'
+      }
+    });
+    
+    if (existingCoachByEmail) {
+      return c.json({ 
+        success: false, 
+        error: 'A coach with this email already exists',
+        details: {
+          existingCoach: {
+            name: `${existingCoachByEmail.fname} ${existingCoachByEmail.lname}`,
+            email: existingCoachByEmail.email,
+            rfid: existingCoachByEmail?.rfid?.toString()
+          }
+        }
+      }, 409);
+    }
+    
+    // Verify activity exists
+    const activity = await prisma.afterschoolactivity.findUnique({
+      where: { id: Number(activityId) }
+    });
+    
+    if (!activity) {
+      return c.json({ 
+        success: false, 
+        error: 'Selected activity does not exist' 
+      }, 400);
+    }
+    
+    // Check how many coaches are already assigned to this activity
+    const existingCoachesCount = await prisma.user.count({
+      where: {
+        type: 'coach',
+        coachedActivity: {
+          id: Number(activityId)
+        }
+      }
+    });
+    
+    console.log(`[DEBUG] Activity ${activityId} already has ${existingCoachesCount} coaches`);
+    
+    // LIMIT: Only 3 coaches per activity
+    const MAX_COACHES_PER_ACTIVITY = 3;
+    if (existingCoachesCount >= MAX_COACHES_PER_ACTIVITY) {
+      const existingCoaches = await prisma.user.findMany({
+        where: {
+          type: 'coach',
+          coachedActivity: {
+            id: Number(activityId)
+          }
+        },
+        select: {
+          fname: true,
+          lname: true,
+          email: true
+        },
+        take: 3
+      });
+      
+      const coachNames = existingCoaches.map(coach => `${coach.fname} ${coach.lname}`).join(', ');
+      
+      return c.json({ 
+        success: false, 
+        error: `This activity already has ${MAX_COACHES_PER_ACTIVITY} coaches assigned. Maximum of ${MAX_COACHES_PER_ACTIVITY} coaches allowed per activity.`,
+        details: {
+          activityId: activityId,
+          activityName: activity.name,
+          currentCoachesCount: existingCoachesCount,
+          maxCoachesAllowed: MAX_COACHES_PER_ACTIVITY,
+          existingCoaches: coachNames,
+          suggestion: 'Please select a different activity or remove an existing coach first.'
+        }
+      }, 400);
+    }
+    
+    let coach;
+    let isExistingUserConverted = false;
+    
+    if (existingUserByRfid) {
+      // ============================================
+      // CASE 1: RFID exists - Convert user to coach
+      // ============================================
+      console.log('[DEBUG] Converting existing user to coach:', existingUserByRfid.id);
+      
+      // If it's a student, remove their enrollments first
+      if (existingUserByRfid.type === 'student') {
+        console.log('[DEBUG] Removing student enrollments...');
+        await prisma.enrolledactivity.deleteMany({
+          where: { userId: existingUserByRfid.id }
+        });
+        await prisma.usersession.deleteMany({
+          where: { userId: existingUserByRfid.id }
+        });
+      }
+      
+      // Convert existing user to coach
+      coach = await prisma.user.update({
+        where: { id: existingUserByRfid.id },
+        data: {
+          type: 'coach',
+          position: 'coach',
+          fname: fname.trim(),
+          lname: lname.trim(),
+          email: email.trim(),
+          gender: gender || existingUserByRfid.gender,
+          mobile: mobile?.trim() || existingUserByRfid.mobile,
+          isEnrolledInAfterSchool: 2, // Set to coach status
+          coachedActivity: {
+            connect: { id: Number(activityId) }
+          },
+          // Clear student-specific fields
+          grade: '',
+          section: '',
+          // REMOVED: updatedAt: new Date(), // User model doesn't have updatedAt field
+        }
+      });
+      
+      isExistingUserConverted = true;
+      console.log('[DEBUG] User converted to coach:', coach.id);
+      
+    } else {
+      // ============================================
+      // CASE 2: RFID doesn't exist - Create new coach
+      // ============================================
+      console.log('[DEBUG] Creating new coach with RFID:', rfid);
+      
+      coach = await prisma.user.create({
+        data: {
+          rfid: rfidBigInt,
+          fname: fname.trim(),
+          mname: '',
+          lname: lname.trim(),
+          type: 'coach',
+          gender: gender || '',
+          position: 'coach',
+          grade: '',
+          section: '',
+          dob: null,
+          email: email.trim(),
+          mobile: mobile?.trim() || '',
+          vacchist: '',
+          photo: '',
+          manager: '',
+          isactive: 1,
+          is_situation: '',
+          username: email.trim(),
+          password: '',
+          level: 1,
+          status: 1,
+          prevsch: '',
+          prevschcountry: '',
+          lrn: '',
+          uniqid: '',
+          tf: '',
+          country: '',
+          nationality: '',
+          nationalities: '',
+          guardianname: '',
+          guardianemail: '',
+          guardianphone: '',
+          referral: '',
+          apptype: '',
+          sy: '',
+          strand: '',
+          religion: '',
+          visa: '',
+          earlybird: 0,
+          modelrelease: 0,
+          feepolicy: 0,
+          refund: 0,
+          tos: 0,
+          empno: '',
+          isESL: 0,
+          house: '',
+          isofficial: 0,
+          isEnrolledInAfterSchool: 2,
+          coachedActivity: {
+            connect: { id: Number(activityId) }
+          },
+        }
+      });
+      
+      console.log('[DEBUG] New coach created:', coach.id);
+    }
+    
+    // Update activity coachName if this is the first coach
+    const currentCoachesCount = await prisma.user.count({
+      where: {
+        type: 'coach',
+        coachedActivity: {
+          id: Number(activityId)
+        }
+      }
+    });
+    
+    if (currentCoachesCount === 1) {
+      await prisma.afterschoolactivity.update({
+        where: { id: Number(activityId) },
+        data: {
+          coachName: `${fname} ${lname}`,
+        }
+      });
+      console.log('[DEBUG] Updated activity coachName');
+    }
+    
+    // Convert BigInt to string before returning
+    const coachWithStringRfid = {
+      ...coach,
+      rfid: coach.rfid?.toString(),
+      assignedActivity: activity.name,
+      assignedActivityId: activity.id,
+      coachNumber: currentCoachesCount,
+      isExistingUserConverted,
+      previousType: isExistingUserConverted ? existingUserByRfid?.type : null,
+    };
+    
+    return c.json({ 
+      success: true, 
+      data: coachWithStringRfid,
+      message: isExistingUserConverted 
+        ? `User ${existingUserByRfid?.fname} ${existingUserByRfid?.lname} (RFID: ${rfid}) converted to coach and assigned to ${activity.name}`
+        : `Coach ${fname} ${lname} created successfully with RFID ${rfid} and assigned to ${activity.name}`
+    }, 201);
+    
+  } catch (error) {
+    console.error('[ERROR] Error creating coach:', error);
+    
+    let errorMessage = 'Internal server error';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      if (error.message.includes('Unique constraint') || error.code === 'P2002') {
+        errorMessage = 'RFID already exists in the system.';
+      } else if (error.message.includes('Foreign key constraint')) {
+        errorMessage = 'Invalid activity ID or activity does not exist';
+      }
+    }
+    
+    return c.json({ 
+      success: false, 
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error instanceof Error ? error.message : undefined : undefined
+    }, 500);
+  }
 };
 
 export const getAllStudentsController = async (c: Context): Promise<Response> => {
-  try {
-    const students = await prisma.user.findMany({
-      where: {
-        position: 'student',
-        isEnrolledInAfterSchool: true,
-      },
-      select: {
-        id: true,
-        rfid: true,
-        fname: true,
-        mname: true,
-        lname: true,
-        position: true,
-        email: true,
-        isEnrolledInAfterSchool: true,
-      },
-    });
+  try {
+    const students = await prisma.user.findMany({
+      where: {
+        type: 'student',
+        isEnrolledInAfterSchool: 1, // Changed from true to 1
+      },
+      select: {
+        id: true,
+        rfid: true,
+        fname: true,
+        mname: true,
+        lname: true,
+        email: true,
+        mobile: true,
+        gender: true,
+        grade: true,
+        section: true,
+        type: true,
+        position: true,
+        isEnrolledInAfterSchool: true,
+        dob: true,
+        photo: true,
+      },
+      orderBy: [
+        { fname: 'asc' },
+        { lname: 'asc' }
+      ]
+    });
 
-    const result = students.map(student => ({
-      ...student,
-      rfid: student.rfid?.toString(),
-    }));
+    const result = students.map(student => ({
+      ...student,
+      rfid: student.rfid?.toString(),
+      fullName: `${student.fname} ${student.mname ? student.mname + ' ' : ''}${student.lname}`.trim(),
+    }));
 
-    return c.json({ success: true, data: result });
-  } catch (error) {
-    console.error('[ERROR] Error fetching students:', error);
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Internal server error',
-    }, 500);
-  }
+    return c.json({ 
+      success: true, 
+      data: result,
+      count: result.length
+    });
+    
+  } catch (error) {
+    console.error('[ERROR] Error fetching students:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
 };
 
 export const getAllCoachesController = async (c: Context): Promise<Response> => {
-  try {
-    const coaches = await prisma.user.findMany({
-      where: {
-        position: 'coach',
-      },
-      select: {
-        id: true,
-        rfid: true,
-        fname: true,
-        mname: true,
-        lname: true,
-        position: true,
-        email: true,
-        isEnrolledInAfterSchool: true,
-      },
-    });
+  try {
+    // Get coaches with their coached activity
+    const coaches = await prisma.user.findMany({
+      where: {
+        type: 'coach' // OR you can use: isEnrolledInAfterSchool: 2
+      },
+      include: {
+        coachedActivity: {
+          select: {
+            id: true,
+            name: true,
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+            location: true,
+            coachName: true,
+            description: true,
+            photo: true,
+            rate: true,
+          }
+        }
+      },
+      orderBy: {
+        fname: 'asc'
+      }
+    });
 
-    const result = coaches.map(coach => ({
-      ...coach,
-      rfid: coach.rfid?.toString(),
-    }));
+    // Format the response
+    const formattedCoaches = coaches.map(coach => {
+      // Get the full name
+      const fullName = `${coach.fname} ${coach.mname ? coach.mname + ' ' : ''}${coach.lname}`.trim();
+      
+      // Format the coach data
+      const formattedCoach: any = {
+        id: coach.id,
+        rfid: coach.rfid?.toString(),
+        fname: coach.fname,
+        mname: coach.mname,
+        lname: coach.lname,
+        fullName: fullName,
+        email: coach.email,
+        gender: coach.gender,
+        mobile: coach.mobile,
+        type: coach.type,
+        position: coach.position,
+        grade: coach.grade,
+        section: coach.section,
+        isEnrolledInAfterSchool: coach.isEnrolledInAfterSchool,
+        // Include activity if available
+        activities: coach.coachedActivity ? [{
+          id: coach.coachedActivity.id,
+          name: coach.coachedActivity.name,
+          dayOfWeek: coach.coachedActivity.dayOfWeek,
+          startTime: coach.coachedActivity.startTime,
+          endTime: coach.coachedActivity.endTime,
+          location: coach.coachedActivity.location,
+          coachName: coach.coachedActivity.coachName,
+          description: coach.coachedActivity.description,
+          photo: coach.coachedActivity.photo,
+          rate: coach.coachedActivity.rate,
+        }] : []
+      };
 
-    return c.json({ success: true, data: result });
-  } catch (error) {
-    console.error('[ERROR] Error fetching coaches:', error);
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Internal server error',
-    }, 500);
-  }
+      return formattedCoach;
+    });
+
+    return c.json({ 
+      success: true, 
+      data: formattedCoaches,
+      count: formattedCoaches.length,
+      message: `Found ${formattedCoaches.length} coach${formattedCoaches.length !== 1 ? 'es' : ''}`
+    });
+    
+  } catch (error) {
+    console.error('[ERROR] Error fetching coaches:', error);
+    
+    return c.json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? 
+        (error instanceof Error ? error.stack : undefined) : undefined
+    }, 500);
+  }
 };
 
 export const createUserController = async (c: Context): Promise<Response> => {
@@ -343,7 +643,7 @@ export const createStudentController = async (c: Context): Promise<Response> => 
         // Update the user's enrollment status
         await prisma.user.update({
           where: { id: existing.id },
-          data: { isEnrolledInAfterSchool: true },
+          data: { isEnrolledInAfterSchool: 1 }, // Students = 1
         });
         
         // Check if enrollment record already exists
@@ -413,8 +713,8 @@ export const createStudentController = async (c: Context): Promise<Response> => 
               activityId: Number(activityId),
               sessionId: activitySession.id,
               sessionsPurchased: Number(sessionsPurchased),
-              sessionsAttended: 0,  // Changed from 1 to 0 ✅
-              sessionsRemaining: Number(sessionsPurchased),  // Changed: no -1 ✅
+              sessionsAttended: 0,
+              sessionsRemaining: Number(sessionsPurchased),
             },
           });
           console.log('[DEBUG] User session created:', userSession.id);
@@ -424,7 +724,7 @@ export const createStudentController = async (c: Context): Promise<Response> => 
             where: { id: userSession.id },
             data: {
               sessionsPurchased: Number(sessionsPurchased),
-              sessionsRemaining: Number(sessionsPurchased) - userSession.sessionsAttended,  // Recalculate based on existing attended ✅
+              sessionsRemaining: Number(sessionsPurchased) - userSession.sessionsAttended,
               updatedAt: new Date(),
             },
           });
@@ -434,7 +734,7 @@ export const createStudentController = async (c: Context): Promise<Response> => 
         const studentWithStringRfid = {
           ...existing,
           rfid: existing.rfid?.toString(),
-          isEnrolledInAfterSchool: true,
+          isEnrolledInAfterSchool: 1,
         };
         
         return c.json({ 
@@ -475,7 +775,7 @@ export const createStudentController = async (c: Context): Promise<Response> => 
         gender,
         position: 'student',
         isactive: 1,
-        isEnrolledInAfterSchool: activityId ? true : false,
+        isEnrolledInAfterSchool: activityId ? 1 : 0, // Students = 1, not enrolled = 0
         grade: '', 
         section: '', 
         dob: null, 
@@ -554,9 +854,6 @@ export const createStudentController = async (c: Context): Promise<Response> => 
         });
       }
       
-      // REMOVED: Automatic attendance creation for new students ❌
-      // Attendance will be marked separately when student actually attends
-
       // Create user session for new student
       userSession = await prisma.usersession.create({
         data: {
@@ -564,8 +861,8 @@ export const createStudentController = async (c: Context): Promise<Response> => 
           activityId: Number(activityId),
           sessionId: activitySession.id,
           sessionsPurchased: Number(sessionsPurchased),
-          sessionsAttended: 0,  // Changed from 1 to 0 ✅
-          sessionsRemaining: Number(sessionsPurchased),  // Changed: no -1 ✅
+          sessionsAttended: 0,
+          sessionsRemaining: Number(sessionsPurchased),
         },
       });
       console.log('[DEBUG] User session created for new student:', userSession.id);
@@ -594,64 +891,148 @@ export const createStudentController = async (c: Context): Promise<Response> => 
   }
 };
 
-// --- NEW CONTROLLER: Fetches students enrolled in a specific activity ---
 export const getStudentsByActivityController = async (c: Context): Promise<Response> => {
-  try {
-    const activityId = c.req.param('activityId');
-    if (!activityId) {
-      return c.json({ success: false, error: 'Missing activity ID' }, 400);
-    }
-    
-    const id = Number(activityId);
-    if (isNaN(id)) {
-      return c.json({ success: false, error: 'Invalid activity ID format' }, 400);
-    }
+  try {
+    const activityId = c.req.param('activityId');
+    if (!activityId) {
+      return c.json({ success: false, error: 'Missing activity ID' }, 400);
+    }
+    
+    const id = Number(activityId);
+    if (isNaN(id)) {
+      return c.json({ success: false, error: 'Invalid activity ID format' }, 400);
+    }
 
-    // 1. Find all `enrolledactivity` records matching the given activityId
-    const enrolledRecords = await prisma.enrolledactivity.findMany({
-      where: { activityId: id },
-      select: { userId: true },
-    });
+    // Verify the activity exists first
+    const activity = await prisma.afterschoolactivity.findUnique({
+      where: { id: id },
+      select: { id: true, name: true }
+    });
 
-    const userIds = enrolledRecords.map(record => record.userId);
+    if (!activity) {
+      return c.json({ 
+        success: false, 
+        error: 'Activity not found' 
+      }, 404);
+    }
 
-    if (userIds.length === 0) {
-        return c.json({ success: true, data: [] }); // No students found
-    }
+    // Get enrolled students with their user sessions and attendance info
+    const enrolledStudents = await prisma.enrolledactivity.findMany({
+      where: { 
+        activityId: id,
+        user: {
+          type: 'student',
+          isEnrolledInAfterSchool: 1, // Students = 1
+        }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            rfid: true,
+            fname: true,
+            mname: true,
+            lname: true,
+            email: true,
+            mobile: true,
+            grade: true,
+            section: true,
+            isEnrolledInAfterSchool: true,
+          }
+        },
+      },
+      orderBy: {
+        user: {
+          fname: 'asc',
+        }
+      }
+    });
 
-    // 2. Fetch the actual user details for those user IDs
-    const students = await prisma.user.findMany({
-      where: {
-        id: { in: userIds }, // Filter by the IDs found above
-        position: 'student', // Safety check: ensure they are students
-        isEnrolledInAfterSchool: true, // Only include students actively enrolled in after-school program
-      },
-      select: {
-        id: true,
-        rfid: true,
-        fname: true,
-        mname: true,
-        lname: true,
-        position: true,
-        email: true,
-        isEnrolledInAfterSchool: true,
-      },
-    });
+    if (enrolledStudents.length === 0) {
+      return c.json({ 
+        success: true, 
+        data: [],
+        activity: activity.name,
+        message: 'No students enrolled in this activity' 
+      });
+    }
 
-    // 3. Convert BigInt rfid to string
-    const result = students.map(student => ({
-      ...student,
-      rfid: student.rfid?.toString(),
-    }));
+    // Get user sessions for each student
+    const userIds = enrolledStudents.map(record => record.userId);
+    
+    const userSessions = await prisma.usersession.findMany({
+      where: {
+        userId: { in: userIds },
+        activityId: id,
+      },
+      select: {
+        userId: true,
+        sessionsPurchased: true,
+        sessionsAttended: true,
+        sessionsRemaining: true,
+        createdAt: true,
+        updatedAt: true,
+      }
+    });
 
-    return c.json({ success: true, data: result });
-  } catch (error) {
-    console.error('[ERROR] Error fetching students by activity:', error);
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Internal server error',
-    }, 500);
-  }
+    // Create a map of user sessions by userId for quick lookup
+    const sessionsMap = new Map();
+    userSessions.forEach(session => {
+      sessionsMap.set(session.userId, session);
+    });
+
+    // Format the result with additional info
+    const result = enrolledStudents.map(record => {
+      const userSession = sessionsMap.get(record.userId);
+      
+      return {
+        id: record.user.id,
+        rfid: record.user.rfid?.toString(),
+        fname: record.user.fname,
+        mname: record.user.mname,
+        lname: record.user.lname,
+        fullName: `${record.user.fname} ${record.user.mname ? record.user.mname + ' ' : ''}${record.user.lname}`.trim(),
+        email: record.user.email,
+        mobile: record.user.mobile,
+        grade: record.user.grade,
+        section: record.user.section,
+        isEnrolledInAfterSchool: record.user.isEnrolledInAfterSchool,
+        enrollmentDate: record.enrollmentDate,
+        // Session information
+        sessionsPurchased: userSession?.sessionsPurchased || 0,
+        sessionsAttended: userSession?.sessionsAttended || 0,
+        sessionsRemaining: userSession?.sessionsRemaining || 0,
+        attendanceRate: userSession?.sessionsPurchased 
+          ? Math.round((userSession.sessionsAttended / userSession.sessionsPurchased) * 100) 
+          : 0,
+        lastUpdated: userSession?.updatedAt || null,
+      };
+    });
+
+    return c.json({ 
+      success: true, 
+      data: result,
+      activity: {
+        id: activity.id,
+        name: activity.name,
+      },
+      summary: {
+        totalStudents: result.length,
+        totalSessionsPurchased: result.reduce((sum, student) => sum + (student.sessionsPurchased || 0), 0),
+        totalSessionsAttended: result.reduce((sum, student) => sum + (student.sessionsAttended || 0), 0),
+        averageAttendanceRate: result.length > 0 
+          ? Math.round(result.reduce((sum, student) => sum + student.attendanceRate, 0) / result.length)
+          : 0,
+      }
+    });
+  } catch (error) {
+    console.error('[ERROR] Error fetching students by activity:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    }, 500);
+  }
 };
 
 export const enrollStudentInActivityController = async (c: Context): Promise<Response> => {
@@ -1010,7 +1391,6 @@ export const loginController = async (c: Context): Promise<Response> => {
   }
 };
 
-// Optional: Verify token middleware
 export const verifyTokenMiddleware = async (c: Context, next: Function) => {
   try {
     const authHeader = c.req.header('Authorization');
@@ -1040,7 +1420,6 @@ export const verifyTokenMiddleware = async (c: Context, next: Function) => {
   }
 };
 
-// Optional: Get current user info (protected route)
 export const getCurrentUserController = async (c: Context): Promise<Response> => {
   try {
     // Get user ID from verified token (set by middleware)
@@ -1110,7 +1489,6 @@ export const getCurrentUserController = async (c: Context): Promise<Response> =>
   }
 };
 
-// Optional: Logout controller (if you want to implement token blacklisting)
 export const logoutController = async (c: Context): Promise<Response> => {
   try {
     // In a stateless JWT setup, logout is typically handled client-side
@@ -1311,7 +1689,6 @@ export const getStudentDetailsController = async (c: Context): Promise<Response>
   }
 };
 
-// Update student information with only specific fields
 export const updateStudentController = async (c: Context): Promise<Response> => {
   try {
     const studentId = c.req.param('id');
@@ -1338,7 +1715,10 @@ export const updateStudentController = async (c: Context): Promise<Response> => 
     
     // Check if student exists
     const existingStudent = await prisma.user.findUnique({
-      where: { id }
+      where: { id },
+      include: {
+        usersession: true, // ✅ Include sessions to check original values
+      }
     });
 
     if (!existingStudent) {
@@ -1374,22 +1754,18 @@ export const updateStudentController = async (c: Context): Promise<Response> => 
           const date = new Date(body.dateOfBirth);
           if (!isNaN(date.getTime())) {
             updateData.dob = date;
-          } else {
-            console.error('[ERROR] Invalid date format:', body.dateOfBirth);
-            // Don't update dob if it's invalid
           }
         } catch (e) {
           console.error('[ERROR] Error parsing date:', body.dateOfBirth, e);
         }
       } else {
-        // If dateOfBirth is empty string, set it to null
         updateData.dob = null;
       }
     }
 
-    console.log(`[DEBUG] Update data to save:`, updateData);
+    console.log(`[DEBUG] User table update data:`, updateData);
 
-    // Update the student
+    // Update the student basic info
     const updatedStudent = await prisma.user.update({
       where: { id },
       data: updateData,
@@ -1410,6 +1786,78 @@ export const updateStudentController = async (c: Context): Promise<Response> => 
       }
     });
 
+    // ✅ NEW: Handle session updates if provided
+    if (body.sessionsPurchased !== undefined) {
+      console.log(`[DEBUG] Updating sessions. New purchased: ${body.sessionsPurchased}`);
+      
+      // Get all user sessions for this student
+      const userSessions = existingStudent.usersession || [];
+      
+      if (userSessions.length > 0) {
+        // Calculate the total original purchased across all sessions
+        const totalOriginalPurchased = userSessions.reduce(
+          (sum, session) => sum + session.sessionsPurchased, 
+          0
+        );
+        
+        // Calculate the difference
+        const newTotalPurchased = Number(body.sessionsPurchased);
+        const purchasedDifference = newTotalPurchased - totalOriginalPurchased;
+        
+        console.log(`[DEBUG] Session calculation:`);
+        console.log(`  Total Original Purchased: ${totalOriginalPurchased}`);
+        console.log(`  New Total Purchased: ${newTotalPurchased}`);
+        console.log(`  Difference: ${purchasedDifference}`);
+        
+        // Update each session proportionally or update the first/main session
+        // Option 1: Update the first session (simplest approach)
+        const mainSession = userSessions[0];
+        
+        const newSessionsRemaining = mainSession.sessionsRemaining + purchasedDifference;
+        
+        console.log(`[DEBUG] Updating session ${mainSession.id}:`);
+        console.log(`  Old: Purchased=${mainSession.sessionsPurchased}, Remaining=${mainSession.sessionsRemaining}`);
+        console.log(`  New: Purchased=${newTotalPurchased}, Remaining=${newSessionsRemaining}`);
+        
+        await prisma.usersession.update({
+          where: { id: mainSession.id },
+          data: {
+            sessionsPurchased: newTotalPurchased,
+            sessionsRemaining: newSessionsRemaining,
+            updatedAt: new Date(),
+          }
+        });
+        
+        console.log(`[DEBUG] Session updated successfully`);
+      } else {
+        console.log(`[DEBUG] No sessions found for student ${id}`);
+      }
+    }
+
+    // Fetch the updated data including sessions
+    const finalStudent = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        usersession: {
+          select: {
+            sessionsPurchased: true,
+            sessionsAttended: true,
+            sessionsRemaining: true,
+          }
+        }
+      }
+    });
+
+    // Calculate session totals
+    const sessionTotals = finalStudent?.usersession?.reduce(
+      (acc, session) => ({
+        purchased: acc.purchased + session.sessionsPurchased,
+        attended: acc.attended + session.sessionsAttended,
+        remaining: acc.remaining + session.sessionsRemaining,
+      }),
+      { purchased: 0, attended: 0, remaining: 0 }
+    ) || { purchased: 0, attended: 0, remaining: 0 };
+
     // Format response
     const formattedStudent = {
       id: updatedStudent.id,
@@ -1426,7 +1874,10 @@ export const updateStudentController = async (c: Context): Promise<Response> => 
       emergencyContact: updatedStudent.guardianphone || '',
       medicalNotes: updatedStudent.vacchist || '',
       isEnrolledInAfterSchool: updatedStudent.isEnrolledInAfterSchool || false,
-      // Use current date since user model doesn't have createdAt/updatedAt
+      // ✅ Use the recalculated session totals
+      sessionsPurchased: sessionTotals.purchased,
+      sessionsAttended: sessionTotals.attended,
+      sessionsRemaining: sessionTotals.remaining,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1451,7 +1902,6 @@ export const updateStudentController = async (c: Context): Promise<Response> => 
   }
 };
 
-// Get student's session information
 export const getStudentSessionsController = async (c: Context): Promise<Response> => {
   try {
     const studentId = c.req.param('id');
@@ -1517,7 +1967,6 @@ export const getStudentSessionsController = async (c: Context): Promise<Response
   }
 };
 
-// Update student's session information
 export const updateStudentSessionsController = async (c: Context): Promise<Response> => {
   try {
     const studentId = c.req.param('id');
@@ -1586,6 +2035,72 @@ export const updateStudentSessionsController = async (c: Context): Promise<Respo
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
+// Check RFID endpoint
+export const checkRfidController = async (c: Context): Promise<Response> => {
+  try {
+    const rfid = c.req.param('rfid');
+    
+    if (!rfid) {
+      return c.json({ success: false, error: 'RFID is required' }, 400);
+    }
+    
+    // Validate RFID format
+    if (!rfid.match(/^\d+$/)) {
+      return c.json({ 
+        success: false, 
+        error: 'RFID must contain only numbers' 
+      }, 400);
+    }
+    
+    const rfidBigInt = BigInt(rfid);
+    
+    // Check if user with this RFID exists
+    const user = await prisma.user.findFirst({
+      where: { rfid: rfidBigInt },
+      include: {
+        coachedActivity: {
+          select: {
+            id: true,
+            name: true,
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+            location: true,
+          }
+        }
+      }
+    });
+    
+    if (user) {
+      const formattedUser = {
+        ...user,
+        rfid: user.rfid?.toString(),
+        activities: user.coachedActivity ? [user.coachedActivity] : []
+      };
+      
+      return c.json({ 
+        success: true, 
+        data: formattedUser,
+        exists: true,
+        userType: user.type || user.position || 'unknown'
+      });
+    }
+    
+    return c.json({ 
+      success: true, 
+      data: null,
+      exists: false 
+    });
+    
+  } catch (error) {
+    console.error('[ERROR] Error checking RFID:', error);
+    return c.json({ 
+      success: false, 
+      error: 'Failed to check RFID' 
     }, 500);
   }
 };

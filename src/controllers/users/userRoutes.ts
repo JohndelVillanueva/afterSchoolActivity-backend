@@ -20,6 +20,7 @@ import {
   updateStudentController,
   getStudentSessionsController,
   updateStudentSessionsController,
+  checkRfidController,
 } from "./usersController.js";
 
 const users = new Hono()
@@ -39,6 +40,7 @@ const users = new Hono()
   .get("/getStudentDetails/:id", getStudentDetailsController)
   .put("/updateStudent/:id", updateStudentController)
   .get("/getStudentSessions/:id", getStudentSessionsController)
-  .put("/updateStudentSessions/:id", updateStudentSessionsController);
+  .put("/updateStudentSessions/:id", updateStudentSessionsController)
+  .get('/checkRfid/:rfid', checkRfidController);
 
 export default users;

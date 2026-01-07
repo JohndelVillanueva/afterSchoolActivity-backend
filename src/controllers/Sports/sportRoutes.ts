@@ -9,7 +9,10 @@ import {
   getTodayAttendanceController, 
   getAllAttendanceTransactionsController,
   updateSportController,  // Add this
-  deleteSportController   // Add this
+  deleteSportController,
+  getStudentsWithSessionsController,
+  getWeeklyScheduleController
+
 } from './sportController.js';
 
 const sports = new Hono()
@@ -22,6 +25,8 @@ const sports = new Hono()
   .get('/getTodayAttendance', getTodayAttendanceController)
   .get('/getAllAttendanceTransactions', getAllAttendanceTransactionsController)
   .put('/updateSport', updateSportController)           // Add this line
-  .delete('/deleteSport/:id', deleteSportController);   // Add this line
+  .delete('/deleteSport/:id', deleteSportController)  // Add this line
+  .get('/activities/:id/students-with-sessions', getStudentsWithSessionsController)
+  .get('/getWeeklySchedule', getWeeklyScheduleController);
 
 export default sports;
