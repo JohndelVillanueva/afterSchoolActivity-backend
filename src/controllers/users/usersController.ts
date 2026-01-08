@@ -11,24 +11,24 @@ const JWT_EXPIRATION = '7d'; // Token expires in 7 days
 export const getAllUsersController = async (c: Context): Promise<Response> => {
   try {
     const users = await prisma.user.findMany({
+  select: {
+    id: true,
+    rfid: true,
+    fname: true,
+    mname: true,
+    lname: true,
+    position: true,
+    email: true,
+    isEnrolledInAfterSchool: true,
+    usersession: {
       select: {
-        id: true,
-        rfid: true,
-        fname: true,
-        mname: true,
-        lname: true,
-        position: true,
-        email: true,
-        isEnrolledInAfterSchool: true,
-        usersession: {  // Add this ✅
-          select: {
-            sessionsPurchased: true,
-            sessionsAttended: true,
-            sessionsRemaining: true,
-          }
-        }
-      },
-    });
+        sessionsPurchased: true,
+        sessionsAttended: true,
+        sessionsRemaining: true,
+      }
+    }
+  },
+});
 
     // Convert BigInt rfid to string and flatten session data
     const usersWithStringRfid = users.map(user => ({
