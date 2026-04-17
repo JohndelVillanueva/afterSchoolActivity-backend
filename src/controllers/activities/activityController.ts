@@ -10,30 +10,18 @@ export const getAllActivitiesController = async (c: Context): Promise<Response> 
         id: true,
         name: true,
         description: true,
-        dayOfWeek: true,
-        startTime: true,
-        endTime: true,
         location: true,
         coachName: true,
         photo: true,
-        rate: true,
       },
       orderBy: {
         name: 'asc',
       },
     });
 
-    // Convert Decimal rate to string for JSON serialization
-    const activitiesWithStringRate = activities.map(activity => ({
-      ...activity,
-      rate: activity.rate.toString(),
-      startTime: activity.startTime.toISOString(),
-      endTime: activity.endTime.toISOString(),
-    }));
-
     return c.json({
       success: true,
-      data: activitiesWithStringRate,
+      data: activities,
     });
   } catch (error) {
     console.error('[ERROR] Error fetching activities:', error);
@@ -87,12 +75,8 @@ export const getActivityByIdController = async (c: Context): Promise<Response> =
       }, 404);
     }
 
-    // Convert rate to string and dates to ISO strings
     const activityWithSerializableData = {
       ...activity,
-      rate: activity.rate.toString(),
-      startTime: activity.startTime.toISOString(),
-      endTime: activity.endTime.toISOString(),
       enrolledactivity: activity.enrolledactivity.map(enrollment => ({
         ...enrollment,
         user: {
@@ -187,29 +171,18 @@ export const updateActivityController = async (c: Context): Promise<Response> =>
     
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;
-    if (body.dayOfWeek !== undefined) updateData.dayOfWeek = body.dayOfWeek;
-    if (body.startTime !== undefined) updateData.startTime = new Date(body.startTime);
-    if (body.endTime !== undefined) updateData.endTime = new Date(body.endTime);
     if (body.location !== undefined) updateData.location = body.location;
     if (body.coachName !== undefined) updateData.coachName = body.coachName;
     if (body.photo !== undefined) updateData.photo = body.photo;
-    if (body.rate !== undefined) updateData.rate = body.rate;
 
     const activity = await prisma.afterschoolactivity.update({
       where: { id },
       data: updateData,
     });
 
-    const activityWithStringRate = {
-      ...activity,
-      rate: activity.rate.toString(),
-      startTime: activity.startTime.toISOString(),
-      endTime: activity.endTime.toISOString(),
-    };
-
     return c.json({
       success: true,
-      data: activityWithStringRate,
+      data: activity,
     });
   } catch (error) {
     console.error('[ERROR] Error updating activity:', error);

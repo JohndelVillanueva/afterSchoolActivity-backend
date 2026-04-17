@@ -16,12 +16,12 @@ function generateUniqueFilename(extension: string): string {
 export const createSportController = async (c: Context): Promise<Response> => {
   try {
     const body = await c.req.json();
-    const { name, description, dayOfWeek, startTime, endTime, location, coachName, photo, rate } = body;
+    const { name, description, coachName, photo } = body;
 
-    if (!name || !dayOfWeek || !startTime || !endTime) {
+    if (!name || !coachName || !description) {
       return c.json({
         success: false,
-        error: 'Missing required fields',
+        error: 'Missing required fields: name, coachName, and description are required',
       }, 400);
     }
 
@@ -30,15 +30,10 @@ export const createSportController = async (c: Context): Promise<Response> => {
       data: {
         name,
         description,
-        dayOfWeek,
-        startTime: new Date(startTime),
-        endTime: new Date(endTime),
-        location,
         coachName,
-        photo,
-        rate,
+        photo: photo || null,
         updatedAt: new Date(),
-      },
+      } as any,
     });
 
     return c.json({

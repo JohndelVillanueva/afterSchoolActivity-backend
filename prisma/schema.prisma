@@ -24,9 +24,9 @@ model afterschoolactivity {
   id               Int                @id @default(autoincrement())
   name             String
   description      String?
-  dayOfWeek        String
-  startTime        DateTime
-  endTime          DateTime
+  dayOfWeek        String?
+  startTime        DateTime?
+  endTime          DateTime?
   location         String?
   coachName        String?
   createdAt        DateTime           @default(now())

@@ -557,7 +557,7 @@ export const createUserController = async (c: Context): Promise<Response> => {
     // Update user enrollment status
     await prisma.user.update({
       where: { id: user.id },
-      data: { isEnrolledInAfterSchool: true },
+      data: { isEnrolledInAfterSchool: 1 },
     });
 
     // Create or find today's activity session
@@ -635,133 +635,122 @@ export const createStudentController = async (c: Context): Promise<Response> => 
     
     if (existing) {
       console.log('[DEBUG] Student with RFID already exists:', existing.id);
-      
-      // Check if they just need to be enrolled in after-school
-      if (!existing.isEnrolledInAfterSchool && activityId) {
-        console.log('[DEBUG] Enrolling existing student in after-school program');
-        
-        // Update the user's enrollment status
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: { isEnrolledInAfterSchool: 1 }, // Students = 1
-        });
-        
-        // Check if enrollment record already exists
-        let enrollment = await prisma.enrolledactivity.findUnique({
-          where: {
-            userId_activityId: {
-              userId: existing.id,
-              activityId: Number(activityId),
+
+      if (!activityId) {
+        return c.json({
+          success: false,
+          error: `${existing.fname} ${existing.lname} (RFID: ${rfid}) already exists. Select an activity to enroll this student.`,
+          details: {
+            existingStudent: {
+              id: existing.id,
+              name: `${existing.fname} ${existing.lname}`,
+              email: existing.email || 'No email',
+              isEnrolledInAfterSchool: existing.isEnrolledInAfterSchool
             }
           },
-        });
-        
-        // Create enrollment record only if it doesn't exist
-        if (!enrollment) {
-          enrollment = await prisma.enrolledactivity.create({
-            data: {
-              userId: existing.id,
-              activityId: Number(activityId),
-            },
-          });
-          console.log('[DEBUG] Enrollment created:', enrollment.id);
-        } else {
-          console.log('[DEBUG] Enrollment already exists:', enrollment.id);
-        }
-        
-        // Create or find activity session
-        const sessionDateToUse = sessionDate ? new Date(sessionDate) : new Date();
-        sessionDateToUse.setHours(0, 0, 0, 0);
-
-        let activitySession = await prisma.activitysession.findFirst({
-          where: {
-            activityId: Number(activityId),
-            date: sessionDateToUse,
-          },
-        });
-
-        if (!activitySession) {
-          activitySession = await prisma.activitysession.create({
-            data: {
-              activityId: Number(activityId),
-              date: sessionDateToUse,
-              updatedAt: new Date(),
-            },
-          });
-          console.log('[DEBUG] Activity session created:', activitySession.id);
-        } else {
-          console.log('[DEBUG] Activity session found:', activitySession.id);
-        }
-        
-        // REMOVED: Automatic attendance creation ❌
-        // We only create enrollment and session, not attendance
-
-        // Create or update user session record
-        let userSession = await prisma.usersession.findUnique({
-          where: {
-            userId_activityId: {
-              userId: existing.id,
-              activityId: Number(activityId),
-            }
-          }
-        });
-
-        if (!userSession) {
-          userSession = await prisma.usersession.create({
-            data: {
-              userId: existing.id,
-              activityId: Number(activityId),
-              sessionId: activitySession.id,
-              sessionsPurchased: Number(sessionsPurchased),
-              sessionsAttended: 0,
-              sessionsRemaining: Number(sessionsPurchased),
-            },
-          });
-          console.log('[DEBUG] User session created:', userSession.id);
-        } else {
-          // Update existing session
-          userSession = await prisma.usersession.update({
-            where: { id: userSession.id },
-            data: {
-              sessionsPurchased: Number(sessionsPurchased),
-              sessionsRemaining: Number(sessionsPurchased) - userSession.sessionsAttended,
-              updatedAt: new Date(),
-            },
-          });
-          console.log('[DEBUG] User session updated:', userSession.id);
-        }
-        
-        const studentWithStringRfid = {
-          ...existing,
-          rfid: existing.rfid?.toString(),
-          isEnrolledInAfterSchool: 1,
-        };
-        
-        return c.json({ 
-          success: true, 
-          data: studentWithStringRfid,
-          enrollment,
-          session: activitySession,
-          userSession,
-          userExists: true,
-          message: 'Existing student enrolled in after-school program successfully'
-        }, 200);
+          userExists: true
+        }, 409);
       }
-      
-      // If they're already enrolled, return error
-      return c.json({ 
-        success: false, 
-        error: `${existing.fname} ${existing.lname} (RFID: ${rfid}) is already enrolled in the after-school program.`,
-        details: {
-          existingStudent: {
-            id: existing.id,
-            name: `${existing.fname} ${existing.lname}`,
-            email: existing.email || 'No email',
-            isEnrolledInAfterSchool: existing.isEnrolledInAfterSchool
+
+      console.log('[DEBUG] Enrolling existing student in selected activity');
+
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { isEnrolledInAfterSchool: 1 },
+      });
+
+      let enrollment = await prisma.enrolledactivity.findUnique({
+        where: {
+          userId_activityId: {
+            userId: existing.id,
+            activityId: Number(activityId),
           }
         },
-        userExists: true 
-      }, 409);
+      });
+
+      if (!enrollment) {
+        enrollment = await prisma.enrolledactivity.create({
+          data: {
+            userId: existing.id,
+            activityId: Number(activityId),
+          },
+        });
+        console.log('[DEBUG] Enrollment created:', enrollment.id);
+      } else {
+        console.log('[DEBUG] Enrollment already exists:', enrollment.id);
+      }
+
+      const sessionDateToUse = sessionDate ? new Date(sessionDate) : new Date();
+      sessionDateToUse.setHours(0, 0, 0, 0);
+
+      let activitySession = await prisma.activitysession.findFirst({
+        where: {
+          activityId: Number(activityId),
+          date: sessionDateToUse,
+        },
+      });
+
+      if (!activitySession) {
+        activitySession = await prisma.activitysession.create({
+          data: {
+            activityId: Number(activityId),
+            date: sessionDateToUse,
+            updatedAt: new Date(),
+          },
+        });
+        console.log('[DEBUG] Activity session created:', activitySession.id);
+      } else {
+        console.log('[DEBUG] Activity session found:', activitySession.id);
+      }
+
+      let userSession = await prisma.usersession.findUnique({
+        where: {
+          userId_activityId: {
+            userId: existing.id,
+            activityId: Number(activityId),
+          }
+        }
+      });
+
+      if (!userSession) {
+        userSession = await prisma.usersession.create({
+          data: {
+            userId: existing.id,
+            activityId: Number(activityId),
+            sessionId: activitySession.id,
+            sessionsPurchased: Number(sessionsPurchased),
+            sessionsAttended: 0,
+            sessionsRemaining: Number(sessionsPurchased),
+          },
+        });
+        console.log('[DEBUG] User session created:', userSession.id);
+      } else {
+        userSession = await prisma.usersession.update({
+          where: { id: userSession.id },
+          data: {
+            sessionsPurchased: Number(sessionsPurchased),
+            sessionsRemaining: Number(sessionsPurchased) - userSession.sessionsAttended,
+            updatedAt: new Date(),
+          },
+        });
+        console.log('[DEBUG] User session updated:', userSession.id);
+      }
+
+      const studentWithStringRfid = {
+        ...existing,
+        rfid: existing.rfid?.toString(),
+        isEnrolledInAfterSchool: 1,
+      };
+
+      return c.json({
+        success: true,
+        data: studentWithStringRfid,
+        enrollment,
+        session: activitySession,
+        userSession,
+        userExists: true,
+        message: 'Existing student enrolled in selected activity successfully'
+      }, 200);
     }
     
     // Create new student
@@ -1079,7 +1068,7 @@ export const enrollStudentInActivityController = async (c: Context): Promise<Res
     // Update user enrollment status
     await prisma.user.update({
       where: { id: user.id },
-      data: { isEnrolledInAfterSchool: true },
+      data: { isEnrolledInAfterSchool: 1 },
     });
 
     // Create or find activity session
