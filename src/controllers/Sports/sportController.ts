@@ -429,7 +429,6 @@ export const getTodayAttendanceController = async (c: Context): Promise<Response
     const tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
 
-    // Find all activity sessions for today
     const sessions = await prisma.activitysession.findMany({
       where: {
         date: {
@@ -447,17 +446,35 @@ export const getTodayAttendanceController = async (c: Context): Promise<Response
       },
     });
 
-    // Flatten attendance records
     const attendanceRecords = sessions.flatMap(session =>
-      session.attendance.map(record => ({
-        id: record.userId.toString(),
-        studentName: `${record.user.fname} ${record.user.mname} ${record.user.lname}`.replace(/\s+/g, ' ').trim(),
-        rfid: record.user.rfid ? record.user.rfid.toString() : "",
-        activity: session.afterschoolactivity.name,
-        date: session.date.toISOString().split('T')[0],
-        time: '', // Optionally add time if you store it
-        status: record.status,
-      }))
+      session.attendance.map(record => {
+        // ✅ FIX 1: Format date WITHOUT using toISOString() 
+        // toISOString() converts to UTC which shifts the date back by ~8 hours
+        const dateObj = new Date(session.date);
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        const formattedDate = `${year}-${month}-${day}`;
+
+        // ✅ FIX 2: Actually return the time instead of empty string
+        const timeStr = record.createdAt 
+          ? new Date(record.createdAt).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            })
+          : '';
+
+        return {
+          id: record.userId.toString(),
+          studentName: `${record.user.fname} ${record.user.mname} ${record.user.lname}`.replace(/\s+/g, ' ').trim(),
+          rfid: record.user.rfid ? record.user.rfid.toString() : "",
+          activity: session.afterschoolactivity.name,
+          date: formattedDate,
+          time: timeStr,
+          status: record.status,
+          processedBy: record.processedBy || null, // ✅ FIX 3: Add processedBy
+        };
+      })
     );
 
     return c.json({ success: true, data: attendanceRecords });

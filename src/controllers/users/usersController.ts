@@ -11,34 +11,68 @@ const JWT_EXPIRATION = '7d'; // Token expires in 7 days
 export const getAllUsersController = async (c: Context): Promise<Response> => {
   try {
     const users = await prisma.user.findMany({
-  select: {
-    id: true,
-    rfid: true,
-    fname: true,
-    mname: true,
-    lname: true,
-    position: true,
-    email: true,
-    isEnrolledInAfterSchool: true,
-    usersession: {
       select: {
-        sessionsPurchased: true,
-        sessionsAttended: true,
-        sessionsRemaining: true,
-      }
-    }
-  },
-});
+        id: true,
+        rfid: true,
+        fname: true,
+        mname: true,
+        lname: true,
+        position: true,
+        email: true,
+        isEnrolledInAfterSchool: true,
+        usersession: {
+          select: {
+            id: true,
+            activityId: true,
+            sessionsPurchased: true,
+            sessionsAttended: true,
+            sessionsRemaining: true,
+            // Include activity details for each session
+            afterschoolactivity: {
+              select: {
+                id: true,
+                name: true,
+                dayOfWeek: true,
+                startTime: true,
+              }
+            }
+          }
+        }
+      },
+    });
 
-    // Convert BigInt rfid to string and flatten session data
-    const usersWithStringRfid = users.map(user => ({
-      ...user,
-      rfid: user.rfid?.toString(),
-      // Get the first session data (or sum if multiple activities)
-      sessionsPurchased: user.usersession[0]?.sessionsPurchased || 0,
-      sessionsAttended: user.usersession[0]?.sessionsAttended || 0,
-      sessionsRemaining: user.usersession[0]?.sessionsRemaining || 0,
-    }));
+    // Convert BigInt rfid to string and include all sessions with activity details
+    const usersWithStringRfid = users.map(user => {
+      // Calculate totals across all sessions
+      const totalSessionsPurchased = user.usersession.reduce((sum, session) => sum + session.sessionsPurchased, 0);
+      const totalSessionsAttended = user.usersession.reduce((sum, session) => sum + session.sessionsAttended, 0);
+      const totalSessionsRemaining = user.usersession.reduce((sum, session) => sum + session.sessionsRemaining, 0);
+
+      // Format individual sessions with activity details
+      const formattedSessions = user.usersession.map(session => ({
+        id: session.id,
+        activityId: session.activityId,
+        activityName: session.afterschoolactivity?.name || 'Unknown Activity',
+        dayOfWeek: session.afterschoolactivity?.dayOfWeek || '',
+        startTime: session.afterschoolactivity?.startTime || '',
+        sessionsPurchased: session.sessionsPurchased,
+        sessionsAttended: session.sessionsAttended,
+        sessionsRemaining: session.sessionsRemaining,
+      }));
+
+      return {
+        ...user,
+        rfid: user.rfid?.toString(),
+        // Totals for overview/progress bar
+        sessionsPurchased: totalSessionsPurchased,
+        sessionsAttended: totalSessionsAttended,
+        sessionsRemaining: totalSessionsRemaining,
+        // Individual sessions array for detailed display
+        sessions: formattedSessions,
+        // Count of sessions/activities
+        sessionCount: formattedSessions.length,
+      };
+    });
 
     return c.json({
       success: true,
