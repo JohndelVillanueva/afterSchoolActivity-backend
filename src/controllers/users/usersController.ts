@@ -546,6 +546,62 @@ export const getAllCoachesController = async (c: Context): Promise<Response> => 
   }
 };
 
+export const getAllUsersListController = async (c: Context): Promise<Response> => {
+  try {
+    // Fetch all users without heavy relations like usersession
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        rfid: true,
+        fname: true,
+        mname: true,
+        lname: true,
+        email: true,
+        mobile: true,
+        type: true, // 'student', 'coach', 'admin', etc.
+        position: true,
+        isactive: true,
+        isEnrolledInAfterSchool: true,
+      },
+      orderBy: [
+        { type: 'asc' }, // Group by type
+        { lname: 'asc' }  // Then sort by last name
+      ]
+    });
+
+    // Format data for frontend
+    const formattedUsers = users.map(user => ({
+      id: user.id,
+      rfid: user.rfid?.toString(),
+      firstName: user.fname,
+      middleName: user.mname,
+      lastName: user.lname,
+      fullName: `${user.fname} ${user.mname ? user.mname + ' ' : ''}${user.lname}`.trim(),
+      email: user.email,
+      mobile: user.mobile,
+      type: user.type || 'User', // Fallback
+      position: user.position || '',
+      status: user.isactive === 1 ? 'Active' : 'Inactive',
+      // Add a derived role based on your logic
+      role: user.type === 'coach' ? 'Coach' : 
+            user.type === 'student' ? 'Student' : 
+            user.position || 'User',
+    }));
+
+    return c.json({
+      success: true,
+      data: formattedUsers,
+      count: formattedUsers.length,
+    });
+  } catch (error) {
+    console.error('[ERROR] Error fetching users list:', error);
+    return c.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Internal server error',
+    }, 500);
+  }
+};
+
 export const createUserController = async (c: Context): Promise<Response> => {
   try {
     const body = await c.req.json();
