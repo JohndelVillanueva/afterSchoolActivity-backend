@@ -203,62 +203,62 @@ model type_of_products {
 }
 
 model user {
-  id               Int                @id @default(autoincrement())
-  rfid             BigInt?            @unique
-  fname            String             @db.MediumText
-  mname            String             @db.MediumText
-  lname            String             @db.MediumText
-  type             String             @db.VarChar(255)
-  gender           String             @db.Text
-  position         String             @db.MediumText
-  grade            String             @db.Text
-  section          String             @db.Text
-  dob              DateTime?          @db.Date
-  email            String             @db.MediumText
-  mobile           String             @db.MediumText
-  vacchist         String             @db.MediumText
-  photo            String             @db.MediumText
-  manager          String             @db.Text
-  isactive         Int
-  is_situation     String             @db.VarChar(255)
-  username         String             @db.Text
-  password         String             @db.Text
-  level            Int
-  status           Int
-  prevsch          String             @db.Text
-  prevschcountry   String             @db.Text
-  lrn              String             @db.Text
-  uniqid           String             @db.Text
-  tf               String             @db.Text
-  country          String             @db.Text
-  nationality      String             @db.Text
-  nationalities    String             @db.VarChar(255)
-  guardianname     String             @db.Text
-  guardianemail    String             @db.Text
-  guardianphone    String             @db.Text
-  referral         String             @db.Text
-  apptype          String             @db.Text
-  sy               String             @db.Text
-  strand           String             @db.Text
-  religion         String             @db.Text
-  visa             String             @db.Text
-  earlybird        Int
-  modelrelease     Int
-  feepolicy        Int
-  refund           Int
-  tos              Int
-  empno            String             @db.Text
-  isESL            Int
-  house            String             @db.VarChar(255)
-  isofficial       Int
-  attendance       attendance[]
-  enrolledactivity enrolledactivity[]
-  usersession      usersession[]
-  isEnrolledInAfterSchool Int @default(0)
-  
-  // For coaches to reference their coached activity
-  coachedActivityId Int?
-  coachedActivity   afterschoolactivity? @relation("CoachedActivity", fields: [coachedActivityId], references: [id])
+  id                      Int                  @id @default(autoincrement())
+  rfid                    BigInt?              @unique
+  fname                   String               @db.MediumText
+  mname                   String               @db.MediumText
+  lname                   String               @db.MediumText
+  type                    String               @db.VarChar(255)
+  gender                  String               @db.Text
+  position                String               @db.MediumText
+  grade                   String               @db.Text
+  section                 String               @db.Text
+  dob                     DateTime?            @db.Date
+  email                   String               @db.MediumText
+  mobile                  String               @db.MediumText
+  vacchist                String               @db.MediumText
+  photo                   String               @db.MediumText
+  manager                 String               @db.Text
+  isactive                Int
+  is_situation            String               @db.VarChar(255)
+  username                String               @db.Text
+  password                String               @db.Text
+  level                   Int
+  status                  Int
+  prevsch                 String               @db.Text
+  prevschcountry          String               @db.Text
+  lrn                     String               @db.Text
+  uniqid                  String               @db.Text
+  tf                      String               @db.Text
+  country                 String               @db.Text
+  nationality             String               @db.Text
+  nationalities           String               @db.VarChar(255)
+  guardianname            String               @db.Text
+  guardianemail           String               @db.Text
+  guardianphone           String               @db.Text
+  referral                String               @db.Text
+  apptype                 String               @db.Text
+  sy                      String               @db.Text
+  strand                  String               @db.Text
+  religion                String               @db.Text
+  visa                    String               @db.Text
+  earlybird               Int
+  modelrelease            Int
+  feepolicy               Int
+  refund                  Int
+  tos                     Int
+  empno                   String               @db.Text
+  isESL                   Int
+  house                   String               @db.VarChar(255)
+  isofficial              Int
+  isEnrolledInAfterSchool Boolean              @default(false)
+  coachedActivityId       Int?
+  attendance              attendance[]
+  enrolledactivity        enrolledactivity[]
+  coachedActivity         afterschoolactivity? @relation("CoachedActivity", fields: [coachedActivityId], references: [id], map: "fk_user_coached_activity")
+  usersession             usersession[]
+
+  @@index([coachedActivityId], map: "fk_user_coached_activity")
 }
 
 model user22 {
@@ -377,17 +377,17 @@ model usersession {
 }
 
 model wispay {
-  id           Int      @id @default(autoincrement())
-  debit        Decimal  @db.Decimal(10, 2)
-  credit       Decimal  @db.Decimal(10, 2)
-  rfid         BigInt
-  empid        String   @db.Text
-  username     String   @db.VarChar(255)
-  refcode      String   @db.Text
-  transdate    DateTime @db.DateTime(0)
-  processedby  String   @db.Text
-  product_type String   @db.VarChar(255)
-  product_name String   @db.VarChar(255)
-  quantity     Float    @db.Float
-  isAfterSchoolPayment Boolean @default(false)
+  id                   Int      @id @default(autoincrement())
+  debit                Decimal  @db.Decimal(10, 2)
+  credit               Decimal  @db.Decimal(10, 2)
+  rfid                 BigInt
+  empid                String   @db.Text
+  username             String   @db.VarChar(255)
+  refcode              String   @db.Text
+  transdate            DateTime @db.DateTime(0)
+  processedby          String   @db.Text
+  product_type         String   @db.VarChar(255)
+  product_name         String   @db.VarChar(255)
+  quantity             Float    @db.Float
+  isAfterSchoolPayment Boolean  @default(false)
 }

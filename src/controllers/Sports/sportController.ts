@@ -18,10 +18,11 @@ export const createSportController = async (c: Context): Promise<Response> => {
     const body = await c.req.json();
     const { name, description, coachName, photo } = body;
 
-    if (!name || !coachName || !description) {
+    // Changed: Only require name and description, coachName is optional
+    if (!name || !description) {
       return c.json({
         success: false,
-        error: 'Missing required fields: name, coachName, and description are required',
+        error: 'Missing required fields: name and description are required',
       }, 400);
     }
 
@@ -30,7 +31,7 @@ export const createSportController = async (c: Context): Promise<Response> => {
       data: {
         name,
         description,
-        coachName,
+        coachName: coachName || null, // Allow null if not provided
         photo: photo || null,
         updatedAt: new Date(),
       } as any,
@@ -54,7 +55,7 @@ export const createSportController = async (c: Context): Promise<Response> => {
       error: error instanceof Error ? error.message : 'Internal server error',
     }, 500);
   }
-};
+};;
 
 export const getAllSportsController = async (c: Context): Promise<Response> => {
   try {
@@ -539,13 +540,8 @@ export const updateSportController = async (c: Context): Promise<Response> => {
       id, 
       name, 
       description, 
-      dayOfWeek, 
-      startTime, 
-      endTime, 
-      location, 
       coachName, 
-      photo, 
-      rate 
+      photo 
     } = body;
 
     // Validate required fields
@@ -556,10 +552,10 @@ export const updateSportController = async (c: Context): Promise<Response> => {
       }, 400);
     }
 
-    if (!name || !dayOfWeek || !startTime || !endTime) {
+    if (!name) {
       return c.json({
         success: false,
-        error: 'Missing required fields: name, dayOfWeek, startTime, and endTime are required',
+        error: 'Activity name is required',
       }, 400);
     }
 
@@ -575,17 +571,12 @@ export const updateSportController = async (c: Context): Promise<Response> => {
       }, 404);
     }
 
-    // Prepare update data
+    // Prepare update data (removed rate)
     const updateData: any = {
       name,
       description: description || '',
-      dayOfWeek,
-      startTime: new Date(startTime),
-      endTime: new Date(endTime),
-      location: location || 'Westfields International School',
       coachName: coachName || '',
       photo: photo || '',
-      rate: Number(rate) || 0,
       updatedAt: new Date(),
     };
 
@@ -613,7 +604,7 @@ export const updateSportController = async (c: Context): Promise<Response> => {
     if (error.code === 'P2002') {
       return c.json({
         success: false,
-        error: 'An activity with this name and start time already exists.',
+        error: 'An activity with this name already exists.',
       }, 409);
     }
 
@@ -849,10 +840,6 @@ export const getStudentsWithSessionsController = async (c: Context): Promise<Res
   }
 };
 
-/**
- * Get weekly schedule view for all activities
- * Shows which activities are happening on which days
- */
 export const getWeeklyScheduleController = async (c: Context): Promise<Response> => {
   try {
     // Get all activities
@@ -937,10 +924,6 @@ export const getWeeklyScheduleController = async (c: Context): Promise<Response>
   }
 };
 
-/**
- * Get attendance history for a specific date range
- * Useful for generating reports
- */
 export const getAttendanceByDateRangeController = async (c: Context): Promise<Response> => {
   try {
     const startDateParam = c.req.query('startDate');
